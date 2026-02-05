@@ -22,9 +22,11 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 
 - Clean TUI with streaming responses
 - Switchable personalities (system prompts)
+- Multiple config profiles (easily switch between setups)
 - Project-specific prompts (auto-loads `agent.md`/`system.md` from current directory)
-- Slash commands (`/help`, `/retry`, `/personality`, etc.)
+- Slash commands (`/help`, `/retry`, `/personality`, `/config`, `/impersonate`, etc.)
 - Keyboard shortcuts (Ctrl+O toggle streaming, Escape to cancel, etc.)
+- Impersonate mode for roleplay (LLM suggests user responses)
 - Persistent configuration
 - SOME Advanced model options (temperature, top_p, top_k, etc.) via config file
 
@@ -35,6 +37,7 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - No conversation memory/persistence
 - No multi-model conversations
 - No model templates (chat templates are handled by Ollama)
+- No multiline input
 - No RAG, no agents, no tools
 
 It's basic. That's the point.
@@ -64,10 +67,13 @@ Windows support is experimental and untested. The `/copy` command should work (u
 ## Usage
 
 ```bash
-ochat                # Start chatting (first run launches setup wizard)
-ochat -C             # Configure (host, model, personality)
-ochat -m llama3.2    # Override model
-ochat --help         # Show options
+ochat                    # Start chatting (first run launches setup wizard)
+ochat -C                 # Configure (host, model, personality)
+ochat -m llama3.2        # Override model
+ochat --new              # Create a new named config profile
+ochat --use-config NAME  # Use a named config for this session
+ochat --use-config NAME --as-default  # Switch to named config permanently
+ochat --help             # Show options
 ```
 
 ### Keyboard shortcuts
@@ -90,6 +96,8 @@ ochat --help         # Show options
 | `/copy` | Copy last response to clipboard |
 | `/clear` | Clear chat history |
 | `/personality` | List/switch personalities |
+| `/config` | List/switch config profiles (restarts app) |
+| `/impersonate` | Generate suggested user response (for RP) |
 | `/project` | Toggle project prompt merge |
 | `/system` | Show current system prompt |
 | `/model` | Show current model |
@@ -98,8 +106,21 @@ ochat --help         # Show options
 ## Configuration
 
 Config lives in `~/.config/ollama-chat/`:
-- `config.conf` - Settings (host, model, context size, etc.)
+- `config.conf` - Default settings (host, model, context size, etc.)
+- `*.conf` - Named config profiles
 - `personalities/` - System prompt templates (`.md` files)
+
+### Multiple config profiles
+
+You can create and switch between different configurations (different models, personalities, settings):
+
+```bash
+ochat --new                          # Create a new profile from scratch
+ochat --use-config my-creative       # Use profile for this session only
+ochat --use-config my-creative --as-default  # Make it the new default
+```
+
+Or switch in-app with `/config`. When switching with `--as-default`, your current config is backed up automatically.
 
 Bundled personalities (copied on first run):
 - `default` - Helpful, concise assistant
@@ -120,6 +141,12 @@ repeat_penalty =
 ```
 
 These are not exposed in the setup wizard - edit the config file manually if needed.
+
+## Debugging
+
+Logs are written to a temp file:
+- **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
+- **Windows**: `%TEMP%\ollama-chat-YYYYMMDD-HHMMSS.log`
 
 ## License
 

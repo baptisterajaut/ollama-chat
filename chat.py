@@ -3,14 +3,26 @@
 
 import argparse
 import asyncio
+import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 # Add script directory to path for imports when called from elsewhere
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Setup logging to temp file
+_log_file = Path(tempfile.gettempdir()) / f"ollama-chat-{datetime.now():%Y%m%d-%H%M%S}.log"
+logging.basicConfig(
+    filename=str(_log_file),
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+_log = logging.getLogger(__name__)
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -33,6 +45,8 @@ class CommandSuggester(Suggester):
         "/model", "/m",
         "/personality", "/p",
         "/project",
+        "/config",
+        "/impersonate", "/imp",
     ]
 
     async def get_suggestion(self, value: str) -> str | None:
@@ -45,15 +59,18 @@ class CommandSuggester(Suggester):
         return None
 
 from config import (
+    CONFIG_DIR,
     CONFIG_FILE,
     load_config,
     load_system_prompt,
     load_personality,
     list_personalities,
+    list_configs,
     find_project_prompt,
     save_personality_choice,
     save_append_local_prompt,
     save_streaming,
+    switch_config_to_default,
     get_default_host,
     run_setup,
 )
@@ -101,6 +118,7 @@ class OllamaChat(App):
         append_local_prompt: bool = True,
         streaming: bool = True,
         model_options: dict | None = None,
+        config_name: str = "",
     ) -> None:
         super().__init__()
         self.model = model
@@ -109,6 +127,7 @@ class OllamaChat(App):
         self.personality_name = personality_name
         self.append_local_prompt = append_local_prompt
         self.model_options = model_options or {}
+        self.config_name = config_name
         self.messages: list[dict] = []
         self.is_generating = False
         self.streaming = streaming
@@ -144,6 +163,7 @@ class OllamaChat(App):
         return base
 
     async def on_mount(self) -> None:
+        _log.info(f"App mounted, model={self.model}, config={self.config_name}")
         self.query_one("#chat-input", Input).focus()
         await self._show_greeting()
 
@@ -152,14 +172,15 @@ class OllamaChat(App):
         chat = self.query_one("#chat", ChatContainer)
         try:
             await asyncio.to_thread(lambda: ollama.list())
-            logo = """\
+            config_line = f"config: {self.config_name} · " if self.config_name else ""
+            logo = f"""\
  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
   ___   ___| |__   __ _| |_
  / _ \\ / __| '_ \\ / _` | __|
 | (_) | (__| | | | (_| | |_
  \\___/ \\___|_| |_|\\__,_|\\__|
 
-Connected · /help for commands"""
+{config_line}Connected · /help for commands"""
             msg = Static(logo, classes="greeting")
             await chat.mount(msg)
             chat.scroll_end(animate=False)
@@ -175,6 +196,7 @@ Connected · /help for commands"""
 
     async def _handle_command(self, cmd: str) -> bool:
         """Handle slash commands. Returns True if command was handled."""
+        _log.debug(f"Command: {cmd}")
         cmd = cmd.strip().lower()
 
         if cmd in ("/help", "/h", "/?"):
@@ -186,6 +208,8 @@ Connected · /help for commands"""
 - `/system` or `/sys` - Show system prompt
 - `/model` or `/m` - Show current model
 - `/personality` or `/p` - List/change personality
+- `/config` - List/switch config profiles
+- `/impersonate` or `/imp` - Generate user response (for RP)
 - `/project` - Toggle local prompt append (agent.md)
 - `/help` or `/h` - Show this help"""
             await self._show_system_message(help_text)
@@ -230,6 +254,14 @@ Connected · /help for commands"""
 
         elif cmd == "/project":
             await self._handle_project_toggle()
+            return True
+
+        elif cmd.startswith("/config") or cmd.startswith("/cfg"):
+            await self._handle_config_command(cmd)
+            return True
+
+        elif cmd in ("/impersonate", "/imp"):
+            await self._handle_impersonate()
             return True
 
         return False
@@ -332,6 +364,108 @@ Connected · /help for commands"""
         else:
             await self._show_system_message(f"Local prompt: **{status}** (no file found)")
 
+    async def _handle_config_command(self, cmd: str) -> None:
+        """Handle /config command for listing and switching configs."""
+        parts = cmd.split(maxsplit=1)
+        configs = list_configs()
+
+        # Add current config.conf as option
+        current_name = self.config_name or "(default)"
+        all_configs = [current_name] + [c for c in configs if c != self.config_name]
+
+        if len(parts) == 1:
+            # List configs
+            lines = ["**Available configs:**"]
+            for i, c in enumerate(all_configs, 1):
+                marker = " ← current" if (i == 1) else ""
+                lines.append(f"{i}. `{c}`{marker}")
+            lines.append("\n*Type `/config <number>` to switch (restarts app)*")
+            await self._show_system_message("\n".join(lines))
+            return
+
+        choice = parts[1].strip()
+        try:
+            idx = int(choice)
+            if idx == 1:
+                await self._show_system_message("Already using this config")
+                return
+            if 2 <= idx <= len(all_configs):
+                selected_config = all_configs[idx - 1]
+            else:
+                await self._show_system_message(f"Invalid choice (1-{len(all_configs)})")
+                return
+        except ValueError:
+            if choice in configs:
+                selected_config = choice
+            else:
+                await self._show_system_message(f"Config '{choice}' not found")
+                return
+
+        # Switch config and restart
+        success, msg = switch_config_to_default(selected_config)
+        if not success:
+            await self._show_system_message(f"Error: {msg}")
+            return
+
+        # Restart the app with new config
+        self.exit()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    async def _handle_impersonate(self) -> None:
+        """Generate a response as if the user was speaking, put it in input."""
+        _log.debug("Impersonate started")
+        if self.is_generating:
+            return
+
+        if len([m for m in self.messages if m["role"] != "system"]) == 0:
+            await self._show_system_message("Need conversation context first")
+            return
+
+        self.is_generating = True
+        status = self.query_one("#status", Static)
+        input_widget = self.query_one("#chat-input", Input)
+
+        # Build messages with impersonate instruction
+        impersonate_messages = self.messages.copy()
+        # Add instruction as system message to not confuse the conversation flow
+        impersonate_messages.append({
+            "role": "system",
+            "content": "Now write what the USER would say next in response to the assistant's last message. Output ONLY the user's reply - no quotes, no narration, no 'User:' prefix. Continue naturally from the conversation."
+        })
+
+        status.update(self._status_text("impersonating..."))
+        input_widget.value = "Impersonating..."
+        input_widget.disabled = True
+
+        try:
+            options = {"num_ctx": self.num_ctx, **self.model_options}
+            result = await asyncio.to_thread(
+                lambda: ollama.chat(
+                    model=self.model,
+                    messages=impersonate_messages,
+                    stream=False,
+                    options=options,
+                )
+            )
+            response = result["message"]["content"].strip()
+            # Remove quotes if the model wrapped the response
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            # Replace newlines with spaces (Input doesn't support multiline)
+            response = " ".join(response.split())
+            _log.debug(f"Impersonate result: {response[:100]}...")
+            input_widget.value = response
+            input_widget.cursor_position = len(response)
+        except Exception as e:
+            _log.exception("Impersonate error")
+            input_widget.value = ""
+            await self._show_system_message(f"Error: {e}")
+
+        input_widget.disabled = False
+        self.is_generating = False
+        status.update(self._status_text())
+        input_widget.focus()
+
     async def _handle_personality_command(self, cmd: str) -> None:
         """Handle /personality command for listing and switching personalities."""
         parts = cmd.split(maxsplit=1)
@@ -417,17 +551,37 @@ Connected · /help for commands"""
 
         try:
             if self.streaming:
-                status.update(self._status_text("generating..."))
                 options = {"num_ctx": self.num_ctx, **self.model_options}
-                stream = await asyncio.to_thread(
-                    lambda: ollama.chat(
-                        model=self.model,
-                        messages=self.messages,
-                        stream=True,
-                        options=options,
-                    )
-                )
 
+                # Start waiting animation while getting stream
+                waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
+                try:
+                    stream = await asyncio.to_thread(
+                        lambda: ollama.chat(
+                            model=self.model,
+                            messages=self.messages,
+                            stream=True,
+                            options=options,
+                        )
+                    )
+                    # Get first chunk (this is where model loading happens)
+                    first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+                finally:
+                    waiting_task.cancel()
+                    try:
+                        await waiting_task
+                    except asyncio.CancelledError:
+                        pass
+
+                # Process first chunk
+                if first_chunk and not self._generation_cancelled:
+                    if "message" in first_chunk and "content" in first_chunk["message"]:
+                        response_text += first_chunk["message"]["content"]
+                        tokens_generated += 1
+                        await assistant_msg.update(f"● {response_text}")
+                        chat.scroll_end(animate=False)
+
+                # Continue with rest of stream
                 for chunk in stream:
                     if self._generation_cancelled:
                         cancelled = True
@@ -483,6 +637,7 @@ Connected · /help for commands"""
                 self.total_tokens += tokens_generated
 
         except Exception as e:
+            _log.exception("Generation error")
             response_text = f"**Error:** {e}"
             await assistant_msg.update(f"● {response_text}")
 
@@ -497,6 +652,17 @@ Connected · /help for commands"""
             elapsed = time.time() - start_time
             await msg.update(f"● {frames[i]} thinking...")
             status.update(self._status_text(f"thinking... {elapsed:.1f}s"))
+            i = (i + 1) % len(frames)
+            await asyncio.sleep(0.1)
+
+    async def _animate_waiting(self, msg: Message, status: Static, start_time: float) -> None:
+        """Animate waiting for first token indicator."""
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        i = 0
+        while True:
+            elapsed = time.time() - start_time
+            await msg.update(f"● {frames[i]} waiting for first token...")
+            status.update(self._status_text(f"waiting... {elapsed:.1f}s"))
             i = (i + 1) % len(frames)
             await asyncio.sleep(0.1)
 
@@ -541,6 +707,8 @@ Connected · /help for commands"""
 
 
 def main():
+    _log.info(f"Starting ollama-chat, log file: {_log_file}")
+
     # First run: launch setup wizard
     if not CONFIG_FILE.exists():
         run_setup()
@@ -572,12 +740,52 @@ def main():
         default=None,
         help=f"Context window size (default from config: {config['num_ctx']})"
     )
+    parser.add_argument(
+        "--use-config",
+        metavar="NAME",
+        help="Use a named config file (without .conf extension)"
+    )
+    parser.add_argument(
+        "--as-default",
+        action="store_true",
+        help="With --use-config: make it the new default config"
+    )
+    parser.add_argument(
+        "--new",
+        action="store_true",
+        help="Create a new named config profile"
+    )
 
     args = parser.parse_args()
+
+    if args.new:
+        run_setup(create_new=True)
+        return
 
     if args.config:
         run_setup()
         return
+
+    # Handle --use-config
+    if args.use_config:
+        config_file = CONFIG_DIR / f"{args.use_config}.conf"
+        if not config_file.exists():
+            print(f"Error: Config '{args.use_config}' not found")
+            available = list_configs()
+            if available:
+                print(f"Available configs: {', '.join(available)}")
+            sys.exit(1)
+
+        if args.as_default:
+            success, msg = switch_config_to_default(args.use_config)
+            if not success:
+                print(f"Error: {msg}")
+                sys.exit(1)
+            # Reload config from the new default
+            config = load_config()
+        else:
+            # Just load the specified config for this session
+            config = load_config(config_file)
 
     model = args.model if args.model else config["model"]
     num_ctx = args.num_ctx if args.num_ctx else config["num_ctx"]
@@ -601,8 +809,15 @@ def main():
         append_local_prompt=config["append_local_prompt"],
         streaming=config["streaming"],
         model_options=config["model_options"],
+        config_name=config["config_name"],
     )
-    app.run()
+    try:
+        app.run()
+    except Exception:
+        _log.exception("Unhandled exception in app.run()")
+        raise
+    finally:
+        _log.info("App exited")
 
 
 if __name__ == "__main__":

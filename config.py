@@ -53,8 +53,20 @@ def load_personality(name: str) -> str | None:
     return None
 
 
-def load_config() -> dict:
-    """Load configuration from file."""
+def list_configs() -> list[str]:
+    """List available config files (without .conf extension)."""
+    return sorted([
+        p.stem for p in CONFIG_DIR.glob("*.conf")
+        if p.is_file() and p.stem != "config"
+    ])
+
+
+def load_config(config_file: Path | None = None) -> dict:
+    """Load configuration from file.
+
+    Args:
+        config_file: Optional path to load from. Defaults to CONFIG_FILE.
+    """
     config = {
         "host": get_default_host(),
         "model": "llama3.2",
@@ -63,11 +75,13 @@ def load_config() -> dict:
         "append_local_prompt": True,
         "streaming": True,
         "model_options": {},
+        "config_name": "",
     }
 
-    if CONFIG_FILE.exists():
+    file_to_load = config_file or CONFIG_FILE
+    if file_to_load.exists():
         parser = configparser.ConfigParser()
-        parser.read(CONFIG_FILE)
+        parser.read(file_to_load)
 
         if parser.has_option("server", "host"):
             config["host"] = parser.get("server", "host")
@@ -81,6 +95,8 @@ def load_config() -> dict:
             config["append_local_prompt"] = parser.getboolean("defaults", "append_local_prompt")
         if parser.has_option("defaults", "streaming"):
             config["streaming"] = parser.getboolean("defaults", "streaming")
+        if parser.has_option("defaults", "config_name"):
+            config["config_name"] = parser.get("defaults", "config_name")
 
         # Load model options (empty string = not set)
         if parser.has_section("model_options"):
@@ -103,19 +119,29 @@ def save_config(
     append_local_prompt: bool = True,
     streaming: bool = True,
     model_options: dict | None = None,
+    config_name: str = "",
+    config_file: Path | None = None,
 ) -> None:
-    """Save configuration to file."""
+    """Save configuration to file.
+
+    Args:
+        config_file: Optional path to save to. Defaults to CONFIG_FILE.
+        config_name: Optional name for this config profile.
+    """
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     parser = configparser.ConfigParser()
     parser["server"] = {"host": host}
-    parser["defaults"] = {
+    defaults = {
         "model": model,
         "num_ctx": str(num_ctx),
         "personality": personality,
         "append_local_prompt": str(append_local_prompt).lower(),
         "streaming": str(streaming).lower(),
     }
+    if config_name:
+        defaults["config_name"] = config_name
+    parser["defaults"] = defaults
 
     # Advanced model options (empty = inherit from model)
     if model_options is None:
@@ -128,8 +154,61 @@ def save_config(
         "repeat_penalty": str(model_options.get("repeat_penalty", "")),
     }
 
-    with open(CONFIG_FILE, "w") as f:
+    file_to_save = config_file or CONFIG_FILE
+    with open(file_to_save, "w") as f:
         parser.write(f)
+
+
+def switch_config_to_default(new_config_name: str) -> tuple[bool, str]:
+    """Switch a named config to be the default config.conf.
+
+    Backs up current config.conf to {config_name}.conf first.
+
+    Args:
+        new_config_name: Name of the config to load (without .conf extension)
+
+    Returns:
+        (success, message)
+    """
+    new_config_file = CONFIG_DIR / f"{new_config_name}.conf"
+    if not new_config_file.exists():
+        return False, f"Config '{new_config_name}' not found"
+
+    if CONFIG_FILE.exists():
+        current_config = load_config()
+        current_name = current_config.get("config_name", "")
+
+        if not current_name:
+            # First backup: ask for name and check overwrite
+            current_name = input("Name for current config backup [config-default]: ").strip()
+            if not current_name:
+                current_name = "config-default"
+
+            backup_file = CONFIG_DIR / f"{current_name}.conf"
+
+            # Only check overwrite on first backup (when config_name was empty)
+            if backup_file.exists():
+                confirm = input(f"'{current_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    return False, "Cancelled"
+        else:
+            backup_file = CONFIG_DIR / f"{current_name}.conf"
+
+        # Save current config with its name
+        save_config(
+            current_config["host"], current_config["model"], current_config["num_ctx"],
+            current_config["personality"], current_config["append_local_prompt"],
+            current_config["streaming"], current_config["model_options"],
+            config_name=current_name, config_file=backup_file
+        )
+        print(f"Backed up current config to {backup_file.name}")
+
+    # Copy new config to config.conf (it keeps its own config_name)
+    import shutil
+    shutil.copy(new_config_file, CONFIG_FILE)
+    print(f"Switched to config '{new_config_name}'")
+
+    return True, f"Now using '{new_config_name}'"
 
 
 def save_personality_choice(personality: str) -> None:
@@ -138,7 +217,7 @@ def save_personality_choice(personality: str) -> None:
     save_config(
         config["host"], config["model"], config["num_ctx"],
         personality, config["append_local_prompt"], config["streaming"],
-        config["model_options"]
+        config["model_options"], config["config_name"]
     )
 
 
@@ -148,7 +227,7 @@ def save_append_local_prompt(append_local_prompt: bool) -> None:
     save_config(
         config["host"], config["model"], config["num_ctx"],
         config["personality"], append_local_prompt, config["streaming"],
-        config["model_options"]
+        config["model_options"], config["config_name"]
     )
 
 
@@ -158,7 +237,7 @@ def save_streaming(streaming: bool) -> None:
     save_config(
         config["host"], config["model"], config["num_ctx"],
         config["personality"], config["append_local_prompt"], streaming,
-        config["model_options"]
+        config["model_options"], config["config_name"]
     )
 
 
@@ -207,11 +286,31 @@ def load_system_prompt(
     return personality_content, personality_name
 
 
-def run_setup() -> None:
-    """Run interactive setup wizard."""
-    print("ollama-chat configuration\n")
+def run_setup(create_new: bool = False) -> None:
+    """Run interactive setup wizard.
 
-    config = load_config()
+    Args:
+        create_new: If True, create a new named config instead of modifying config.conf
+    """
+    if create_new:
+        print("ollama-chat - Create new config profile\n")
+        config = {
+            "host": get_default_host(),
+            "model": "llama3.2",
+            "num_ctx": 4096,
+            "personality": "default",
+            "append_local_prompt": True,
+            "streaming": True,
+            "model_options": {},
+            "config_name": "",
+        }
+        config_existed = False
+        old_config_name = ""
+    else:
+        print("ollama-chat configuration\n")
+        config_existed = CONFIG_FILE.exists()
+        config = load_config()
+        old_config_name = config.get("config_name", "")
 
     # 1. Ask for host
     default_host = config["host"]
@@ -313,7 +412,106 @@ def run_setup() -> None:
     else:
         append_local_prompt = config["append_local_prompt"]
 
-    # 7. Save config
-    save_config(host, model, num_ctx, personality, append_local_prompt, config["streaming"], config["model_options"])
-    print(f"\nConfiguration saved to {CONFIG_FILE}")
+    if create_new:
+        # 7. Ask for new config name
+        while True:
+            new_name = input("\nName for this config profile: ").strip()
+            if not new_name:
+                print("Name required")
+                continue
+            if new_name == "config":
+                print("Cannot use 'config' as name (reserved)")
+                continue
+            break
+
+        # 8. Apply as default?
+        apply_default = input("\nApply this config as default? [y/N]: ").strip().lower()
+
+        if apply_default in ("y", "yes"):
+            # Backup current config.conf first
+            if CONFIG_FILE.exists():
+                current_config = load_config()
+                current_name = current_config.get("config_name", "")
+
+                if not current_name:
+                    current_name = input("Name for current config backup [config-default]: ").strip()
+                    if not current_name:
+                        current_name = "config-default"
+
+                backup_file = CONFIG_DIR / f"{current_name}.conf"
+
+                # Only ask overwrite on first backup
+                do_backup = True
+                if backup_file.exists():
+                    confirm = input(f"'{current_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
+                    if confirm not in ("y", "yes"):
+                        do_backup = False
+                        print("Backup skipped")
+
+                if do_backup:
+                    save_config(
+                        current_config["host"], current_config["model"], current_config["num_ctx"],
+                        current_config["personality"], current_config["append_local_prompt"],
+                        current_config["streaming"], current_config["model_options"],
+                        config_name=current_name, config_file=backup_file
+                    )
+                    print(f"Backed up current config to {backup_file.name}")
+
+            # Save new config as default (with config_name set)
+            save_config(
+                host, model, num_ctx, personality, append_local_prompt,
+                config["streaming"], config["model_options"],
+                config_name=new_name
+            )
+            print(f"\nConfig '{new_name}' saved as default")
+        else:
+            # Save as named config only
+            new_file = CONFIG_DIR / f"{new_name}.conf"
+            if new_file.exists():
+                confirm = input(f"'{new_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    print("Cancelled")
+                    return
+
+            save_config(
+                host, model, num_ctx, personality, append_local_prompt,
+                config["streaming"], config["model_options"],
+                config_name=new_name, config_file=new_file
+            )
+            print(f"\nConfig saved to {new_file}")
+            print(f"Use with: ochat --use-config {new_name}")
+    else:
+        # 7. Backup existing config?
+        if config_existed:
+            backup_choice = input("\nBackup current config before saving? [y/N]: ").strip().lower()
+            if backup_choice in ("y", "yes"):
+                backup_name = old_config_name
+                if not backup_name:
+                    backup_name = input("Name for backup [config-default]: ").strip()
+                    if not backup_name:
+                        backup_name = "config-default"
+
+                backup_file = CONFIG_DIR / f"{backup_name}.conf"
+
+                # Check for overwrite
+                do_backup = True
+                if backup_file.exists():
+                    confirm = input(f"'{backup_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
+                    if confirm not in ("y", "yes"):
+                        do_backup = False
+                        print("Backup skipped")
+
+                if do_backup:
+                    save_config(
+                        config["host"], config["model"], config["num_ctx"],
+                        config["personality"], config["append_local_prompt"],
+                        config["streaming"], config["model_options"],
+                        config_name=backup_name, config_file=backup_file
+                    )
+                    print(f"Backed up to {backup_file.name}")
+
+        # 8. Save to config.conf (without config_name for default config)
+        save_config(host, model, num_ctx, personality, append_local_prompt, config["streaming"], config["model_options"])
+        print(f"\nConfiguration saved to {CONFIG_FILE}")
+
     print(f"Personalities in {PERSONALITIES_DIR}/")
