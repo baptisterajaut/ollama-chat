@@ -37,7 +37,7 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - No conversation memory/persistence
 - No multi-model conversations
 - No model templates (chat templates are handled by Ollama)
-- No multiline input
+- No multiline input (TextArea doesn't support suggesters, and I prefer a single-line input with autocomplete over multiline without it — or making Claude reinvent the wheel and turning this codebase from "only Claude and God understand it" to "only God understands it")
 - No RAG, no agents, no tools
 
 It's basic. That's the point.
