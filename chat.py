@@ -119,6 +119,7 @@ class OllamaChat(App):
         streaming: bool = True,
         model_options: dict | None = None,
         config_name: str = "",
+        host: str | None = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -128,6 +129,7 @@ class OllamaChat(App):
         self.append_local_prompt = append_local_prompt
         self.model_options = model_options or {}
         self.config_name = config_name
+        self.client = ollama.Client(host=host)
         self.messages: list[dict] = []
         self.is_generating = False
         self.streaming = streaming
@@ -171,7 +173,7 @@ class OllamaChat(App):
         """Show greeting with ASCII art after validating Ollama connection."""
         chat = self.query_one("#chat", ChatContainer)
         try:
-            await asyncio.to_thread(lambda: ollama.list())
+            await asyncio.to_thread(lambda: self.client.list())
             config_line = f"config: {self.config_name} · " if self.config_name else ""
             logo = f"""\
  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -437,7 +439,7 @@ class OllamaChat(App):
         try:
             options = {"num_ctx": self.num_ctx, **self.model_options}
             result = await asyncio.to_thread(
-                lambda: ollama.chat(
+                lambda: self.client.chat(
                     model=self.model,
                     messages=impersonate_messages,
                     stream=False,
@@ -554,7 +556,7 @@ class OllamaChat(App):
                 waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
                 try:
                     stream = await asyncio.to_thread(
-                        lambda: ollama.chat(
+                        lambda: self.client.chat(
                             model=self.model,
                             messages=self.messages,
                             stream=True,
@@ -599,7 +601,7 @@ class OllamaChat(App):
                 try:
                     options = {"num_ctx": self.num_ctx, **self.model_options}
                     result = await asyncio.to_thread(
-                        lambda: ollama.chat(
+                        lambda: self.client.chat(
                             model=self.model,
                             messages=self.messages,
                             stream=False,
@@ -787,8 +789,7 @@ def main():
     model = args.model if args.model else config["model"]
     num_ctx = args.num_ctx if args.num_ctx else config["num_ctx"]
 
-    if config["host"] != get_default_host() or "OLLAMA_HOST" not in os.environ:
-        os.environ["OLLAMA_HOST"] = config["host"]
+    host = config["host"]
 
     if args.system_prompt:
         system_prompt = args.system_prompt
@@ -807,6 +808,7 @@ def main():
         streaming=config["streaming"],
         model_options=config["model_options"],
         config_name=config["config_name"],
+        host=host,
     )
     try:
         app.run()

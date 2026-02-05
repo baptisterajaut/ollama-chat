@@ -109,6 +109,10 @@ Logs are written to a temp file for debugging:
 
 Captures: app start, commands, errors, Textual exceptions.
 
+## Gotchas
+
+- **ollama-python global client**: Never use `ollama.chat()`, `ollama.list()` etc. (module-level functions). The library creates its default client at import time using `OLLAMA_HOST` env var — setting the env var after `import ollama` has no effect. Always use an explicit `ollama.Client(host=...)` instance (`self.client` in `OllamaChat`). Host priority: config.conf `[server] host` > `OLLAMA_HOST` env var > `http://localhost:11434`.
+
 ## Notes for future development
 
 - Token count is approximated (1 chunk ≈ 1 token) in streaming mode
