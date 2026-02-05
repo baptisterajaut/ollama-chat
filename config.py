@@ -314,7 +314,7 @@ def run_setup(create_new: bool = False) -> None:
 
     # 1. Ask for host
     default_host = config["host"]
-    host = input(f"Host Ollama [{default_host}]: ").strip()
+    host = input(f"Ollama host [{default_host}]: ").strip()
     if not host:
         host = default_host
 

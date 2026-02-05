@@ -190,7 +190,7 @@ class OllamaChat(App):
     async def _show_system_message(self, text: str) -> None:
         """Show a system info message in the chat."""
         chat = self.query_one("#chat", ChatContainer)
-        msg = Message(f"*{text}*", "system-info")
+        msg = Message(text, "system-info")
         await chat.mount(msg)
         chat.scroll_end(animate=False)
 
@@ -236,10 +236,7 @@ class OllamaChat(App):
 
         elif cmd in ("/system", "/sys"):
             if self.system_prompt:
-                sp = self.system_prompt
-                if len(sp) > 500:
-                    sp = sp[:500] + "..."
-                await self._show_system_message(f"**System prompt:**\n{sp}")
+                await self._show_system_message(f"**System prompt:**\n{self.system_prompt}")
             else:
                 await self._show_system_message("No system prompt set.")
             return True
@@ -476,7 +473,7 @@ class OllamaChat(App):
             for i, p in enumerate(personalities, 1):
                 marker = " ← current" if p == self.personality_name else ""
                 lines.append(f"{i}. `{p}`{marker}")
-            lines.append("\n*Tapez `/p <numéro>` pour changer*")
+            lines.append("\n*Type `/p <number>` to switch*")
             await self._show_system_message("\n".join(lines))
             return
 
