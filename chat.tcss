@@ -1,0 +1,56 @@
+Screen {
+    background: $surface;
+}
+
+ChatContainer {
+    height: 1fr;
+    padding: 1 2;
+    align: left bottom;
+}
+
+.message {
+    margin: 1 0;
+    padding: 0 1;
+    height: auto;
+}
+
+.message.user {
+    background: $primary-darken-3;
+}
+
+.message.user MarkdownParagraph {
+    margin: 0;
+    padding: 1;
+}
+
+.message.assistant {
+    color: $text;
+}
+
+.message.system-info {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.greeting {
+    color: $text-muted;
+    text-align: center;
+    padding: 1;
+}
+
+#input-container {
+    height: auto;
+    dock: bottom;
+    padding: 1 2;
+}
+
+#chat-input {
+    width: 100%;
+}
+
+#status {
+    dock: bottom;
+    height: 1;
+    padding: 0 2;
+    color: $text-muted;
+}

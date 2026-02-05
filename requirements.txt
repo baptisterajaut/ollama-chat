@@ -1,0 +1,2 @@
+textual>=7.0.0
+ollama>=0.6.0

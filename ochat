@@ -1,0 +1,20 @@
+#!/bin/bash
+# Resolve symlinks to get the real script directory
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+# Create venv and install dependencies if needed
+if [ ! -d "$SCRIPT_DIR/.venv" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv "$SCRIPT_DIR/.venv"
+    echo "Installing dependencies..."
+    "$SCRIPT_DIR/.venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+    echo "Done."
+fi
+
+exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/chat.py" "$@"
