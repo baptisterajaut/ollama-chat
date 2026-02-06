@@ -27,6 +27,7 @@ _log = logging.getLogger(__name__)
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
+from textual.events import Click
 from textual.suggester import Suggester
 from textual.widgets import Footer, Input, Markdown, Static
 import ollama
@@ -168,6 +169,10 @@ class OllamaChat(App):
         _log.info(f"App mounted, model={self.model}, config={self.config_name}")
         self.query_one("#chat-input", Input).focus()
         await self._show_greeting()
+
+    def on_click(self, event: Click) -> None:
+        """Keep focus on input when clicking anywhere."""
+        self.query_one("#chat-input", Input).focus()
 
     async def _show_greeting(self) -> None:
         """Show greeting with ASCII art after validating Ollama connection."""
