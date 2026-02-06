@@ -31,7 +31,7 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - Keyboard shortcuts (Ctrl+O toggle streaming, Escape to cancel, etc.)
 - Impersonate mode for roleplay (LLM suggests user responses)
 - Persistent configuration
-- SOME Advanced model options (temperature, top_p, top_k, etc.) via config file
+- Pass-through for any Ollama model option (temperature, top_p, etc.) via config file
 - OpenAI-compatible API fallback (LM Studio, llama.cpp, vLLM, etc.) - **untested**
 
 ## Non-features
@@ -144,7 +144,7 @@ repeat_penalty = 1.1
 # Any other Ollama option works too
 ```
 
-See [Ollama modelfile docs](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values) for available options. Not exposed in the setup wizard - edit the config file manually.
+See [Ollama docs](https://docs.ollama.com/modelfile#valid-parameters-and-values) for available options. Not exposed in the setup wizard - edit the config file manually.
 
 ### OpenAI-compatible mode (untested)
 
