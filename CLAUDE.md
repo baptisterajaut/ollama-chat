@@ -22,7 +22,7 @@ ollama-chat/
 ## Configuration
 
 Config stored in `~/.config/ollama-chat/`:
-- `config.conf` - INI format settings (host, model, num_ctx, personality, streaming, append_local_prompt, config_name)
+- `config.conf` - INI format settings (host, verify_ssl, model, num_ctx, personality, streaming, append_local_prompt, config_name)
 - `*.conf` - Named config profiles (backups created via setup wizard or `--as-default`)
 - `personalities/` - System prompt templates (`.md` files)
 
@@ -134,6 +134,8 @@ Captures: app start, commands, errors, Textual exceptions.
 ## Gotchas
 
 - **ollama-python global client**: Never use `ollama.chat()`, `ollama.list()` etc. (module-level functions). The library creates its default client at import time using `OLLAMA_HOST` env var — setting the env var after `import ollama` has no effect. Always use an explicit `ollama.Client(host=...)` instance (`self.client` in `OllamaChat`). Host priority: config.conf `[server] host` > `OLLAMA_HOST` env var > `http://localhost:11434`.
+
+- **SSL verification**: `verify_ssl` in `[server]` controls SSL certificate verification. Only written to config when `false` (default is `true`/absent). When `false`, `ollama.Client` gets `verify=False` and `openai.OpenAI` gets a custom `httpx.Client(verify=False)`. The setup wizard auto-detects SSL errors on HTTPS hosts and offers to disable verification.
 
 - **OpenAI mode**: API mode branching is handled by three helpers: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
 

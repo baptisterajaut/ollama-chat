@@ -124,6 +124,7 @@ class OllamaChat(App):
         model_options: dict | None = None,
         config_name: str = "",
         host: str | None = None,
+        verify_ssl: bool = True,
     ) -> None:
         super().__init__()
         self.model = model
@@ -134,8 +135,16 @@ class OllamaChat(App):
         self.model_options = model_options or {}
         self.config_name = config_name
         self.host = host or "http://localhost:11434"
-        self.ollama_client = ollama.Client(host=host)
-        self.openai_client = openai.OpenAI(base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed")
+        self.verify_ssl = verify_ssl
+        self.ollama_client = ollama.Client(host=host, verify=verify_ssl)
+        if verify_ssl:
+            self.openai_client = openai.OpenAI(base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed")
+        else:
+            import httpx
+            self.openai_client = openai.OpenAI(
+                base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed",
+                http_client=httpx.Client(verify=False),
+            )
         self.api_mode = "ollama"  # "ollama" or "openai"
         self.messages: list[dict] = []
         self.is_generating = False
@@ -1000,6 +1009,7 @@ def main():
         model_options=config["model_options"],
         config_name=config["config_name"],
         host=host,
+        verify_ssl=config["verify_ssl"],
     )
     try:
         app.run()

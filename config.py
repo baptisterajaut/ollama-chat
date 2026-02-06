@@ -71,6 +71,7 @@ def load_config(config_file: Path | None = None) -> dict:
         "personality": "default",
         "append_local_prompt": True,
         "streaming": True,
+        "verify_ssl": True,
         "model_options": {},
         "config_name": "",
     }
@@ -81,6 +82,7 @@ def load_config(config_file: Path | None = None) -> dict:
         parser.read(file_to_load)
 
         config["host"] = parser.get("server", "host", fallback=config["host"])
+        config["verify_ssl"] = parser.getboolean("server", "verify_ssl", fallback=config["verify_ssl"])
         config["model"] = parser.get("defaults", "model", fallback=config["model"])
         config["num_ctx"] = parser.getint("defaults", "num_ctx", fallback=config["num_ctx"])
         config["personality"] = parser.get("defaults", "personality", fallback=config["personality"])
@@ -114,12 +116,16 @@ def save_config(
     model_options: dict | None = None,
     config_name: str = "",
     config_file: Path | None = None,
+    verify_ssl: bool = True,
 ) -> None:
     """Save configuration to file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     parser = configparser.ConfigParser()
-    parser["server"] = {"host": host}
+    server = {"host": host}
+    if not verify_ssl:
+        server["verify_ssl"] = "false"
+    parser["server"] = server
     defaults = {
         "model": model,
         "num_ctx": str(num_ctx),
@@ -154,6 +160,7 @@ def update_config(**overrides) -> None:
         streaming=config["streaming"],
         model_options=config["model_options"],
         config_name=config["config_name"],
+        verify_ssl=config["verify_ssl"],
     )
 
 
@@ -192,7 +199,8 @@ def switch_config_to_default(new_config_name: str, interactive: bool = True) -> 
             current_config["host"], current_config["model"], current_config["num_ctx"],
             current_config["personality"], current_config["append_local_prompt"],
             current_config["streaming"], current_config["model_options"],
-            config_name=current_name, config_file=backup_file
+            config_name=current_name, config_file=backup_file,
+            verify_ssl=current_config["verify_ssl"],
         )
         print(f"Backed up current config to {backup_file.name}")
 
@@ -258,6 +266,7 @@ def run_setup(create_new: bool = False) -> None:
             "personality": "default",
             "append_local_prompt": True,
             "streaming": True,
+            "verify_ssl": True,
             "model_options": {},
             "config_name": "",
         }
@@ -276,14 +285,31 @@ def run_setup(create_new: bool = False) -> None:
         host = default_host
 
     # 2. List and select model
+    verify_ssl = config.get("verify_ssl", True)
     print("\nConnecting to Ollama...")
     try:
-        client = ollama.Client(host=host)
+        client = ollama.Client(host=host, verify=verify_ssl)
         models_response = client.list()
         models = [m.model for m in models_response.models]
     except Exception as e:
-        print(f"Connection error: {e}")
-        sys.exit(1)
+        error_str = str(e).upper()
+        if host.startswith("https") and any(kw in error_str for kw in ("SSL", "CERTIFICATE", "VERIFY")):
+            skip = input("SSL certificate error. Ignore verification? (homelab only) [y/N]: ").strip().lower()
+            if skip in ("y", "yes"):
+                verify_ssl = False
+                try:
+                    client = ollama.Client(host=host, verify=False)
+                    models_response = client.list()
+                    models = [m.model for m in models_response.models]
+                except Exception as e2:
+                    print(f"Connection error: {e2}")
+                    sys.exit(1)
+            else:
+                print(f"Connection error: {e}")
+                sys.exit(1)
+        else:
+            print(f"Connection error: {e}")
+            sys.exit(1)
 
     if not models:
         print("No models found. Install one with 'ollama pull <model>'")
@@ -410,7 +436,8 @@ def run_setup(create_new: bool = False) -> None:
                         current_config["host"], current_config["model"], current_config["num_ctx"],
                         current_config["personality"], current_config["append_local_prompt"],
                         current_config["streaming"], current_config["model_options"],
-                        config_name=current_name, config_file=backup_file
+                        config_name=current_name, config_file=backup_file,
+                        verify_ssl=current_config["verify_ssl"],
                     )
                     print(f"Backed up current config to {backup_file.name}")
 
@@ -418,7 +445,7 @@ def run_setup(create_new: bool = False) -> None:
             save_config(
                 host, model, num_ctx, personality, append_local_prompt,
                 config["streaming"], config["model_options"],
-                config_name=new_name
+                config_name=new_name, verify_ssl=verify_ssl,
             )
             print(f"\nConfig '{new_name}' saved as default")
         else:
@@ -433,7 +460,8 @@ def run_setup(create_new: bool = False) -> None:
             save_config(
                 host, model, num_ctx, personality, append_local_prompt,
                 config["streaming"], config["model_options"],
-                config_name=new_name, config_file=new_file
+                config_name=new_name, config_file=new_file,
+                verify_ssl=verify_ssl,
             )
             print(f"\nConfig saved to {new_file}")
             print(f"Use with: ochat --use-config {new_name}")
@@ -463,12 +491,13 @@ def run_setup(create_new: bool = False) -> None:
                         config["host"], config["model"], config["num_ctx"],
                         config["personality"], config["append_local_prompt"],
                         config["streaming"], config["model_options"],
-                        config_name=backup_name, config_file=backup_file
+                        config_name=backup_name, config_file=backup_file,
+                        verify_ssl=config["verify_ssl"],
                     )
                     print(f"Backed up to {backup_file.name}")
 
         # 8. Save to config.conf (without config_name for default config)
-        save_config(host, model, num_ctx, personality, append_local_prompt, config["streaming"], config["model_options"])
+        save_config(host, model, num_ctx, personality, append_local_prompt, config["streaming"], config["model_options"], verify_ssl=verify_ssl)
         print(f"\nConfiguration saved to {CONFIG_FILE}")
 
     print(f"Personalities in {PERSONALITIES_DIR}/")

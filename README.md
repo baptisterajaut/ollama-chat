@@ -38,14 +38,15 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 
 ## Non-features
 
-- No SSL support
+- It's just a client. No plan to have it start Ollama by itself or llama-cpp-python or anything
+- Made for Ollama only, OpenAI fallback is there "just in case" and is not tested
 - No conversation memory/persistence
 - No multi-model conversations
 - No model templates (chat templates are handled by Ollama/your server)
 - No multiline input (TextArea doesn't support suggesters, and I prefer a single-line input with autocomplete over multiline without it — or making Claude reinvent the wheel and turning this codebase from "only Claude and God understand it" to "only God understands it")
 - No RAG, no agents, no tools
 
-It's basic. That's the point.
+It's somewhat basic. It has a bit more features than what I really needed, but it's no Claude Code
 
 ## Installation
 
@@ -167,6 +168,16 @@ host = http://localhost:1234
 
 [defaults]
 model = your-loaded-model-name
+```
+
+### Self-signed certificates (homelab)
+
+For HTTPS hosts with self-signed certificates, the setup wizard will detect SSL errors and offer to disable verification. You can also set it manually in `config.conf`:
+
+```ini
+[server]
+host = https://my-homelab:11434
+verify_ssl = false
 ```
 
 The greeting will show "Connected (OpenAI mode)" when using this fallback.
