@@ -9,6 +9,7 @@ ollama-chat/
 ├── chat.py          # Main application (Textual TUI)
 ├── chat.tcss        # Textual CSS styles
 ├── config.py        # Configuration management, personalities
+├── system_instructions.json  # LLM instructions for commands (compact, impersonate)
 ├── ochat            # Launcher script (symlinked to ~/bin/ochat)
 ├── requirements.txt # Dependencies: textual, ollama
 ├── personalities/   # Bundled personality templates (copied on first run)
@@ -92,6 +93,12 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 - `/config <n>` - Switch to config by number/name (restarts app)
 - `/impersonate`, `/imp` - Generate user response suggestion (for RP)
 - `/project` - Toggle local prompt append
+- `/stats`, `/st` - Show generation statistics (TTFT, t/s, tokens)
+- `/compact` - Summarize conversation to free context
+
+## System instructions
+
+LLM instructions for commands (compact, impersonate) are stored in `system_instructions.json` at the project root. Users can edit this file to customize the instructions. The app exits with an error if the file is missing or invalid JSON.
 
 ## Personalities
 
@@ -130,9 +137,25 @@ Captures: app start, commands, errors, Textual exceptions.
 
 - **OpenAI mode**: API mode branching is handled by three helpers: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
 
+## Generation modes
+
+Both streaming and non-streaming modes use `stream=True` under the hood:
+
+- **Streaming**: shows text live as tokens arrive
+- **Non-streaming**: buffers tokens, shows `⠋ thinking... 3.2s (42 chunks)` progress, then displays the full response prefixed with `*thought for 3.2s*`
+
+Both modes start with a "waiting for first token" spinner and track TTFT.
+
+## Context tracking
+
+- Token count is approximated (~4 chars/token from all messages, 1 chunk ≈ 1 token for generated output)
+- Context usage percentage shown in `/context` and `/stats`
+- Status bar shows `ctx: N% remaining` when usage exceeds 85%
+- Status bar shows `⚠ Context length probably exceeded` when over 100%
+- One-shot system message warning at 80% usage suggesting `/compact`
+
 ## Notes for future development
 
-- Token count is approximated (1 chunk ≈ 1 token) in streaming mode
 - No conversation persistence yet (could add /save, /load commands)
 - No multi-turn editing (could add message editing)
 - No multiline input (Input widget limitation, would need TextArea)

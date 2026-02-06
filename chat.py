@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -50,6 +51,8 @@ class CommandSuggester(Suggester):
         "/project",
         "/config",
         "/impersonate", "/imp",
+        "/stats", "/st",
+        "/compact",
     ]
 
     async def get_suggestion(self, value: str) -> str | None:
@@ -141,8 +144,25 @@ class OllamaChat(App):
         self.total_tokens = 0
         self.last_gen_time = 0.0
         self.last_tokens = 0
+        self.last_ttft = 0.0
+        self._context_warning_shown = False
+        self.sys_instructions = self._load_system_instructions()
         if system_prompt:
             self.messages.append({"role": "system", "content": system_prompt})
+
+    @staticmethod
+    def _load_system_instructions() -> dict:
+        """Load system_instructions.json. Fatal error if missing or invalid."""
+        path = Path(__file__).parent / "system_instructions.json"
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"Error: {path} not found. Please restore the file.")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(f"Error: {path} is not valid JSON: {e}")
+            sys.exit(1)
 
     def compose(self) -> ComposeResult:
         yield ChatContainer(id="chat")
@@ -157,6 +177,22 @@ class OllamaChat(App):
         yield Static(self._status_text(), id="status")
         yield Footer()
 
+    def _estimate_context_tokens(self) -> int:
+        """Rough token estimate for all messages (~4 chars/token)."""
+        return sum(len(m["content"]) // 4 for m in self.messages)
+
+    def _context_pct(self) -> float:
+        """Estimated context usage as percentage."""
+        if self.num_ctx <= 0:
+            return 0.0
+        return self._estimate_context_tokens() / self.num_ctx * 100
+
+    def _context_info(self) -> str:
+        msg_count = len([m for m in self.messages if m["role"] != "system"])
+        estimated = self._estimate_context_tokens()
+        pct = self._context_pct()
+        return f"Messages: {msg_count} | Tokens used: ~{estimated} ({pct:.0f}%) | Context size: {self.num_ctx}"
+
     def _status_text(self, extra: str = "") -> str:
         if self.api_mode == "openai":
             base = f"{self.model} (openai)"
@@ -164,9 +200,16 @@ class OllamaChat(App):
             base = f"{self.model} | ctx:{self.num_ctx}"
         if self.last_gen_time > 0:
             tps = self.last_tokens / self.last_gen_time if self.last_gen_time else 0
-            base += f" | last: {self.last_gen_time:.1f}s ({self.last_tokens}tok, {tps:.1f}t/s)"
+            ttft_str = f", ttft:{self.last_ttft:.2f}s" if self.last_ttft > 0 else ""
+            base += f" | last: {self.last_gen_time:.1f}s ({self.last_tokens}tok, {tps:.1f}t/s{ttft_str})"
         if self.total_tokens > 0:
             base += f" | total: {self.total_tokens}tok"
+        # Context warnings
+        pct = self._context_pct()
+        if pct > 100:
+            base += " | ⚠ Context length probably exceeded"
+        elif pct > 85:
+            base += f" | ctx: {100 - pct:.0f}% remaining"
         if extra:
             base += f" | {extra}"
         return base
@@ -247,6 +290,8 @@ class OllamaChat(App):
 - `/config` - List/switch config profiles
 - `/impersonate` or `/imp` - Generate user response (for RP)
 - `/project` - Toggle local prompt append (agent.md)
+- `/stats` or `/st` - Show generation statistics
+- `/compact` - Summarize conversation to free context
 - `/help` or `/h` - Show this help"""
             await self._show_system_message(help_text)
             return True
@@ -265,9 +310,7 @@ class OllamaChat(App):
             return True
 
         elif cmd in ("/context", "/ctx"):
-            msg_count = len([m for m in self.messages if m["role"] != "system"])
-            info = f"Messages: {msg_count} | Tokens used: ~{self.total_tokens} | Context size: {self.num_ctx}"
-            await self._show_system_message(info)
+            await self._show_system_message(self._context_info())
             return True
 
         elif cmd == "/prompt":
@@ -304,6 +347,14 @@ class OllamaChat(App):
 
         elif cmd in ("/impersonate", "/imp"):
             await self._handle_impersonate()
+            return True
+
+        elif cmd in ("/stats", "/st"):
+            await self._handle_stats()
+            return True
+
+        elif cmd == "/compact":
+            await self._handle_compact()
             return True
 
         return False
@@ -434,10 +485,9 @@ class OllamaChat(App):
 
         # Build messages with impersonate instruction
         impersonate_messages = self.messages.copy()
-        # Add instruction as system message to not confuse the conversation flow
         impersonate_messages.append({
             "role": "system",
-            "content": "Now write what the USER would say next in response to the assistant's last message. Output ONLY the user's reply - no quotes, no narration, no 'User:' prefix. Continue naturally from the conversation."
+            "content": self.sys_instructions["impersonate"],
         })
 
         status.update(self._status_text("impersonating..."))
@@ -462,6 +512,125 @@ class OllamaChat(App):
             _log.exception("Impersonate error")
             input_widget.value = ""
             await self._show_system_message(f"Error: {e}")
+
+        input_widget.disabled = False
+        self.is_generating = False
+        status.update(self._status_text())
+        input_widget.focus()
+
+    async def _handle_stats(self) -> None:
+        """Show generation statistics."""
+        mode = "streaming" if self.streaming else "non-streaming"
+        lines = [f"**Stats** — `{self.model}` ({mode})"]
+
+        if self.last_gen_time > 0:
+            tps = self.last_tokens / self.last_gen_time if self.last_gen_time else 0
+            lines.append(f"\n**Last generation:**")
+            lines.append(f"- Duration: {self.last_gen_time:.2f}s")
+            if self.last_ttft > 0:
+                lines.append(f"- TTFT: {self.last_ttft:.2f}s")
+            lines.append(f"- Tokens: {self.last_tokens}")
+            lines.append(f"- Speed: {tps:.1f} t/s")
+        else:
+            lines.append("\nNo generation yet.")
+
+        lines.append(f"\n{self._context_info()}")
+
+        await self._show_system_message("\n".join(lines))
+
+    async def _handle_compact(self) -> None:
+        """Summarize conversation to free up context."""
+        if self.is_generating:
+            return
+
+        conv_messages = [m for m in self.messages if m["role"] != "system"]
+        if len(conv_messages) < 2:
+            await self._show_system_message("Not enough conversation to compact")
+            return
+
+        self.is_generating = True
+        chat = self.query_one("#chat", ChatContainer)
+        status = self.query_one("#status", Static)
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.disabled = True
+
+        # Show spinner message in chat
+        spinner_msg = Message("...", "system-info")
+        await chat.mount(spinner_msg)
+        chat.scroll_end(animate=False)
+
+        start_time = time.time()
+        summary = ""
+        chunks = 0
+
+        try:
+            compact_messages = self.messages.copy()
+            compact_messages.append({
+                "role": "system",
+                "content": self.sys_instructions["compact"],
+            })
+
+            # Phase 1: waiting for first token
+            spinner = asyncio.create_task(
+                self._animate_spinner(spinner_msg, status, start_time, "waiting for first token")
+            )
+            try:
+                stream = await asyncio.to_thread(
+                    lambda: self._chat_call(compact_messages, stream=True)
+                )
+                first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+            finally:
+                spinner.cancel()
+                try:
+                    await spinner
+                except asyncio.CancelledError:
+                    pass
+
+            # Phase 2: buffer response, show progress
+            if first_chunk:
+                content = self._extract_chunk(first_chunk)
+                if content:
+                    summary += content
+                    chunks += 1
+
+                frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                for chunk in stream:
+                    content = self._extract_chunk(chunk)
+                    if content:
+                        summary += content
+                        chunks += 1
+                    elapsed = time.time() - start_time
+                    frame = frames[int(elapsed * 10) % len(frames)]
+                    await spinner_msg.update(f"{frame} compacting conversation... {elapsed:.1f}s ({chunks} chunks)")
+                    chat.scroll_end(animate=False)
+                    status.update(self._status_text(f"compacting... {elapsed:.1f}s ({chunks} chunks)"))
+
+            summary = summary.strip()
+            elapsed = time.time() - start_time
+
+            # Rebuild messages: system prompt + summary as context
+            self.messages = []
+            if self.system_prompt:
+                self.messages.append({"role": "system", "content": self.system_prompt})
+            prefix = self.sys_instructions["compact_prefix"]
+            self.messages.append({"role": "system", "content": f"{prefix}\n\n{summary}"})
+
+            # Reset counters
+            self.total_tokens = 0
+            self.last_gen_time = 0.0
+            self.last_tokens = 0
+            self.last_ttft = 0.0
+            self._context_warning_shown = False
+
+            # Refresh chat display
+            chat.remove_children()
+            await self._show_system_message(f"**Conversation compacted** *({elapsed:.1f}s)*\n\n{summary}")
+            _log.info(f"Compacted conversation: {len(conv_messages)} messages -> summary ({len(summary)} chars)")
+
+        except Exception as e:
+            _log.exception("Compact error")
+            await spinner_msg.remove()
+            await self._show_system_message(f"Error compacting: {e}")
 
         input_widget.disabled = False
         self.is_generating = False
@@ -583,65 +752,69 @@ class OllamaChat(App):
         cancelled = False
 
         try:
-            if self.streaming:
-                spinner = asyncio.create_task(
-                    self._animate_spinner(assistant_msg, status, start_time, "waiting for first token")
+            # Always stream under the hood, show "waiting for first token"
+            spinner = asyncio.create_task(
+                self._animate_spinner(assistant_msg, status, start_time, "waiting for first token")
+            )
+            try:
+                stream = await asyncio.to_thread(
+                    lambda: self._chat_call(self.messages, stream=True)
                 )
+                first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+            finally:
+                spinner.cancel()
                 try:
-                    stream = await asyncio.to_thread(
-                        lambda: self._chat_call(self.messages, stream=True)
-                    )
-                    first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-                finally:
-                    spinner.cancel()
-                    try:
-                        await spinner
-                    except asyncio.CancelledError:
-                        pass
+                    await spinner
+                except asyncio.CancelledError:
+                    pass
 
-                if first_chunk and not self._generation_cancelled:
-                    content = self._extract_chunk(first_chunk)
-                    if content:
-                        response_text += content
-                        tokens_generated += 1
-                        await assistant_msg.update(f"● {response_text}")
-                        chat.scroll_end(animate=False)
+            self.last_ttft = time.time() - start_time if not self._generation_cancelled else 0.0
 
-                for chunk in stream:
-                    if self._generation_cancelled:
-                        cancelled = True
-                        break
-                    content = self._extract_chunk(chunk)
-                    if content:
-                        response_text += content
-                        tokens_generated += 1
-                        await assistant_msg.update(f"● {response_text}")
-                        chat.scroll_end(animate=False)
-                    elapsed = time.time() - start_time
-                    tps = tokens_generated / elapsed if elapsed > 0 else 0
-                    status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
-            else:
-                spinner = asyncio.create_task(
-                    self._animate_spinner(assistant_msg, status, start_time, "thinking")
-                )
-                try:
-                    result = await asyncio.to_thread(
-                        lambda: self._chat_call(self.messages, stream=False)
-                    )
-                    if not self._generation_cancelled:
-                        response_text, tokens_generated = self._extract_result(result)
-                    else:
-                        cancelled = True
-                finally:
-                    spinner.cancel()
-                    try:
-                        await spinner
-                    except asyncio.CancelledError:
-                        pass
+            if first_chunk and not self._generation_cancelled:
+                content = self._extract_chunk(first_chunk)
+                if content:
+                    response_text += content
+                    tokens_generated += 1
 
-                if not cancelled:
+                if self.streaming:
+                    # Show text live as it streams
                     await assistant_msg.update(f"● {response_text}")
                     chat.scroll_end(animate=False)
+
+                    for chunk in stream:
+                        if self._generation_cancelled:
+                            cancelled = True
+                            break
+                        content = self._extract_chunk(chunk)
+                        if content:
+                            response_text += content
+                            tokens_generated += 1
+                            await assistant_msg.update(f"● {response_text}")
+                            chat.scroll_end(animate=False)
+                        elapsed = time.time() - start_time
+                        tps = tokens_generated / elapsed if elapsed > 0 else 0
+                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
+                else:
+                    # Buffer response, show "thinking" with chunk count
+                    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                    for chunk in stream:
+                        if self._generation_cancelled:
+                            cancelled = True
+                            break
+                        content = self._extract_chunk(chunk)
+                        if content:
+                            response_text += content
+                            tokens_generated += 1
+                        elapsed = time.time() - start_time
+                        frame = frames[int(elapsed * 10) % len(frames)]
+                        await assistant_msg.update(f"● {frame} thinking... {elapsed:.1f}s ({tokens_generated} chunks)")
+                        chat.scroll_end(animate=False)
+                        status.update(self._status_text(f"thinking... {elapsed:.1f}s ({tokens_generated} chunks)"))
+
+                    if not cancelled:
+                        think_time = time.time() - start_time
+                        await assistant_msg.update(f"● *thought for {think_time:.1f}s*\n\n{response_text}")
+                        chat.scroll_end(animate=False)
 
             if cancelled:
                 await assistant_msg.update("● *[cancelled]*")
@@ -661,6 +834,14 @@ class OllamaChat(App):
         self.is_generating = False
         status.update(self._status_text())
 
+        # One-shot context warning
+        if not self._context_warning_shown and self._context_pct() > 80:
+            self._context_warning_shown = True
+            remaining = 100 - self._context_pct()
+            await self._show_system_message(
+                f"⚠ Approximately {remaining:.0f}% context length remaining, consider compacting (`/compact`)"
+            )
+
     async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:
         """Animate spinner indicator with given label."""
         frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -668,6 +849,7 @@ class OllamaChat(App):
         while True:
             elapsed = time.time() - start_time
             await msg.update(f"● {frames[i]} {label}...")
+            self.query_one("#chat", ChatContainer).scroll_end(animate=False)
             status.update(self._status_text(f"{label}... {elapsed:.1f}s"))
             i = (i + 1) % len(frames)
             await asyncio.sleep(0.1)
@@ -707,6 +889,8 @@ class OllamaChat(App):
         self.total_tokens = 0
         self.last_gen_time = 0.0
         self.last_tokens = 0
+        self.last_ttft = 0.0
+        self._context_warning_shown = False
         if self.system_prompt:
             self.messages.append({"role": "system", "content": self.system_prompt})
         self.query_one("#status", Static).update(self._status_text())

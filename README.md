@@ -30,6 +30,8 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - Slash commands (`/help`, `/retry`, `/personality`, `/config`, `/impersonate`, etc.)
 - Keyboard shortcuts (Ctrl+O toggle streaming, Escape to cancel, etc.)
 - Impersonate mode for roleplay (LLM suggests user responses)
+- Context tracking with usage warnings and `/compact` to summarize conversation
+- Generation stats (TTFT, tokens/s) in status bar and `/stats`
 - Persistent configuration
 - Pass-through for any Ollama model option (temperature, top_p, etc.) via config file
 - OpenAI-compatible API fallback (LM Studio, llama.cpp, vLLM, etc.) - **untested**
@@ -105,6 +107,8 @@ ochat --help             # Show options
 | `/prompt` | Show current system prompt |
 | `/sys <msg>` | Inject a system message (alias: `/system`) |
 | `/model` | Show current model |
+| `/stats` | Show generation statistics (TTFT, t/s, tokens) |
+| `/compact` | Summarize conversation to free context |
 | `/context` | Show context info |
 
 ## Configuration
