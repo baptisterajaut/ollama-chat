@@ -83,7 +83,8 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 - `/retry`, `/r` - Regenerate last response
 - `/copy` - Copy last response to clipboard
 - `/context`, `/ctx` - Show context info
-- `/system`, `/sys` - Show system prompt
+- `/prompt` - Show system prompt
+- `/sys <msg>`, `/system <msg>` - Inject a system message into conversation
 - `/model`, `/m` - Show current model
 - `/personality`, `/p` - List personalities
 - `/p <n>` - Switch to personality by number/name

@@ -102,7 +102,8 @@ ochat --help             # Show options
 | `/config` | List/switch config profiles (restarts app) |
 | `/impersonate` | Generate suggested user response (for RP) |
 | `/project` | Toggle project prompt merge |
-| `/system` | Show current system prompt |
+| `/prompt` | Show current system prompt |
+| `/sys <msg>` | Inject a system message (alias: `/system`) |
 | `/model` | Show current model |
 | `/context` | Show context info |
 

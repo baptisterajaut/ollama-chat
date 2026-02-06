@@ -44,7 +44,8 @@ class CommandSuggester(Suggester):
         "/retry", "/r",
         "/copy",
         "/context", "/ctx",
-        "/system", "/sys",
+        "/prompt",
+        "/sys", "/system",
         "/model", "/m",
         "/personality", "/p",
         "/project",
@@ -242,7 +243,8 @@ class OllamaChat(App):
 - `/copy` - Copy last response to clipboard
 - `/clear` or `/c` - Clear chat history
 - `/context` or `/ctx` - Show current context info
-- `/system` or `/sys` - Show system prompt
+- `/prompt` - Show system prompt
+- `/sys <msg>` or `/system <msg>` - Inject a system message
 - `/model` or `/m` - Show current model
 - `/personality` or `/p` - List/change personality
 - `/config` - List/switch config profiles
@@ -271,11 +273,20 @@ class OllamaChat(App):
             await self._show_system_message(info)
             return True
 
-        elif cmd in ("/system", "/sys"):
+        elif cmd == "/prompt":
             if self.system_prompt:
                 await self._show_system_message(f"**System prompt:**\n{self.system_prompt}")
             else:
                 await self._show_system_message("No system prompt set.")
+            return True
+
+        elif cmd.startswith("/sys ") or cmd.startswith("/system "):
+            # Inject a system message into the conversation
+            parts = cmd.split(maxsplit=1)
+            if len(parts) > 1:
+                sys_msg = parts[1].strip()
+                self.messages.append({"role": "system", "content": sys_msg})
+                await self._show_system_message(f"*[injected]* {sys_msg}")
             return True
 
         elif cmd in ("/model", "/m"):
@@ -442,6 +453,15 @@ class OllamaChat(App):
             return
 
         # Restart the app with new config
+        await self._restart_app()
+
+    async def _restart_app(self) -> None:
+        """Show restart message and relaunch the app."""
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Restarting..."
+        input_widget.disabled = True
+        await asyncio.sleep(0.1)  # Let UI refresh
         self.exit()
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
@@ -540,13 +560,17 @@ class OllamaChat(App):
             await self._show_system_message(f"Error: unable to load '{new_personality}'")
             return
 
+        save_personality_choice(new_personality)
+
+        # If conversation has started, restart app to apply cleanly
+        has_conversation = any(m["role"] in ("user", "assistant") for m in self.messages)
+        if has_conversation:
+            await self._restart_app()
+
+        # No conversation yet, just swap the prompt
         self.personality_name = new_personality
         self.system_prompt = content
-
-        self.messages = [m for m in self.messages if m["role"] != "system"]
-        self.messages.insert(0, {"role": "system", "content": content})
-
-        save_personality_choice(new_personality)
+        self.messages = [{"role": "system", "content": content}]
 
         await self._show_system_message(f"Personality changed: **{new_personality}**")
 
