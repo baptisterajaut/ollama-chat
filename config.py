@@ -98,14 +98,17 @@ def load_config(config_file: Path | None = None) -> dict:
         if parser.has_option("defaults", "config_name"):
             config["config_name"] = parser.get("defaults", "config_name")
 
-        # Load model options (empty string = not set)
+        # Load model options (empty string = not set, any key allowed)
         if parser.has_section("model_options"):
             model_options = {}
-            for key in ["temperature", "top_p", "top_k", "min_p", "repeat_penalty"]:
-                if parser.has_option("model_options", key):
-                    val = parser.get("model_options", key).strip()
-                    if val:
+            for key in parser.options("model_options"):
+                val = parser.get("model_options", key).strip()
+                if val:
+                    # Try to convert to number, otherwise keep as string
+                    try:
                         model_options[key] = float(val)
+                    except ValueError:
+                        model_options[key] = val
             config["model_options"] = model_options
 
     return config
@@ -143,16 +146,10 @@ def save_config(
         defaults["config_name"] = config_name
     parser["defaults"] = defaults
 
-    # Advanced model options (empty = inherit from model)
+    # Advanced model options (pass-through, any key allowed)
     if model_options is None:
         model_options = {}
-    parser["model_options"] = {
-        "temperature": str(model_options.get("temperature", "")),
-        "top_p": str(model_options.get("top_p", "")),
-        "top_k": str(model_options.get("top_k", "")),
-        "min_p": str(model_options.get("min_p", "")),
-        "repeat_penalty": str(model_options.get("repeat_penalty", "")),
-    }
+    parser["model_options"] = {k: str(v) for k, v in model_options.items()}
 
     file_to_save = config_file or CONFIG_FILE
     with open(file_to_save, "w") as f:

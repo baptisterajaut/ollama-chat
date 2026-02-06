@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import subprocess
@@ -11,6 +12,8 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+
+import requests
 
 # Add script directory to path for imports when called from elsewhere
 sys.path.insert(0, str(Path(__file__).parent))
@@ -130,7 +133,9 @@ class OllamaChat(App):
         self.append_local_prompt = append_local_prompt
         self.model_options = model_options or {}
         self.config_name = config_name
+        self.host = host or "http://localhost:11434"
         self.client = ollama.Client(host=host)
+        self.api_mode = "ollama"  # "ollama" or "openai"
         self.messages: list[dict] = []
         self.is_generating = False
         self.streaming = streaming
@@ -155,7 +160,10 @@ class OllamaChat(App):
         yield Footer()
 
     def _status_text(self, extra: str = "") -> str:
-        base = f"{self.model} | ctx:{self.num_ctx}"
+        if self.api_mode == "openai":
+            base = f"{self.model} (openai)"
+        else:
+            base = f"{self.model} | ctx:{self.num_ctx}"
         if self.last_gen_time > 0:
             tps = self.last_tokens / self.last_gen_time if self.last_gen_time else 0
             base += f" | last: {self.last_gen_time:.1f}s ({self.last_tokens}tok, {tps:.1f}t/s)"
@@ -175,11 +183,15 @@ class OllamaChat(App):
         self.query_one("#chat-input", Input).focus()
 
     async def _show_greeting(self) -> None:
-        """Show greeting with ASCII art after validating Ollama connection."""
+        """Show greeting with ASCII art after validating connection."""
         chat = self.query_one("#chat", ChatContainer)
+        config_line = f"config: {self.config_name} · " if self.config_name else ""
+
+        # Try Ollama first
         try:
             await asyncio.to_thread(lambda: self.client.list())
-            config_line = f"config: {self.config_name} · " if self.config_name else ""
+            self.api_mode = "ollama"
+            _log.info("Connected in Ollama mode")
             logo = f"""\
  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
   ___   ___| |__   __ _| |_
@@ -188,11 +200,37 @@ class OllamaChat(App):
  \\___/ \\___|_| |_|\\__,_|\\__|
 
 {config_line}Connected · /help for commands"""
-            msg = Static(logo, classes="greeting")
-            await chat.mount(msg)
-            chat.scroll_end(animate=False)
-        except Exception:
-            await self._show_system_message("Warning: Cannot connect to Ollama")
+        except Exception as e:
+            _log.info(f"Ollama list failed ({e}), trying OpenAI fallback")
+            # Fallback: check if base URL responds (OpenAI-compatible server)
+            try:
+                base_url = self.host.rstrip("/")
+                resp = await asyncio.to_thread(
+                    lambda: requests.get(f"{base_url}/v1/models", timeout=5)
+                )
+                if resp.status_code in (200, 401, 403):
+                    # Server responds (even auth error means it's there)
+                    self.api_mode = "openai"
+                    _log.info("Connected in OpenAI-compatible mode")
+                    logo = f"""\
+ ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ___   ___| |__   __ _| |_
+ / _ \\ / __| '_ \\ / _` | __|
+| (_) | (__| | | | (_| | |_
+ \\___/ \\___|_| |_|\\__,_|\\__|
+
+{config_line}Connected (OpenAI mode) · /help for commands"""
+                else:
+                    await self._show_system_message("Warning: Cannot connect to server")
+                    return
+            except Exception as e2:
+                _log.warning(f"OpenAI fallback failed: {e2}")
+                await self._show_system_message("Warning: Cannot connect to server")
+                return
+
+        msg = Static(logo, classes="greeting")
+        await chat.mount(msg)
+        chat.scroll_end(animate=False)
 
     async def _show_system_message(self, text: str) -> None:
         """Show a system info message in the chat."""
@@ -442,16 +480,22 @@ class OllamaChat(App):
         input_widget.disabled = True
 
         try:
-            options = {"num_ctx": self.num_ctx, **self.model_options}
-            result = await asyncio.to_thread(
-                lambda: self.client.chat(
-                    model=self.model,
-                    messages=impersonate_messages,
-                    stream=False,
-                    options=options,
+            if self.api_mode == "openai":
+                result = await asyncio.to_thread(
+                    lambda: self._openai_chat(impersonate_messages, stream=False)
                 )
-            )
-            response = result["message"]["content"].strip()
+                response = result["choices"][0]["message"]["content"].strip()
+            else:
+                options = {"num_ctx": self.num_ctx, **self.model_options}
+                result = await asyncio.to_thread(
+                    lambda: self.client.chat(
+                        model=self.model,
+                        messages=impersonate_messages,
+                        stream=False,
+                        options=options,
+                    )
+                )
+                response = result["message"]["content"].strip()
             # Remove quotes if the model wrapped the response
             if response.startswith('"') and response.endswith('"'):
                 response = response[1:-1]
@@ -536,6 +580,43 @@ class OllamaChat(App):
 
         await self._generate_response()
 
+    def _openai_chat(self, messages: list[dict], stream: bool = False):
+        """Make OpenAI-compatible chat completion request."""
+        base_url = self.host.rstrip("/")
+        url = f"{base_url}/v1/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": stream,
+        }
+        if stream:
+            resp = requests.post(url, json=payload, stream=True, timeout=300)
+            resp.raise_for_status()
+            return resp
+        else:
+            resp = requests.post(url, json=payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+
+    def _iter_openai_stream(self, response):
+        """Iterate over OpenAI SSE stream, yielding content chunks."""
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8")
+            if line.startswith("data: "):
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
+
     async def _generate_response(self) -> None:
         """Generate assistant response (streaming or not)."""
         self.is_generating = True
@@ -554,85 +635,137 @@ class OllamaChat(App):
         cancelled = False
 
         try:
-            if self.streaming:
-                options = {"num_ctx": self.num_ctx, **self.model_options}
-
-                # Start waiting animation while getting stream
-                waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
-                try:
-                    stream = await asyncio.to_thread(
-                        lambda: self.client.chat(
-                            model=self.model,
-                            messages=self.messages,
-                            stream=True,
-                            options=options,
-                        )
-                    )
-                    # Get first chunk (this is where model loading happens)
-                    first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-                finally:
-                    waiting_task.cancel()
+            if self.api_mode == "openai":
+                # OpenAI-compatible API
+                if self.streaming:
+                    waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
                     try:
-                        await waiting_task
-                    except asyncio.CancelledError:
-                        pass
+                        stream_resp = await asyncio.to_thread(
+                            lambda: self._openai_chat(self.messages, stream=True)
+                        )
+                        # Get iterator
+                        stream_iter = self._iter_openai_stream(stream_resp)
+                        first_chunk = await asyncio.to_thread(lambda: next(stream_iter, None))
+                    finally:
+                        waiting_task.cancel()
+                        try:
+                            await waiting_task
+                        except asyncio.CancelledError:
+                            pass
 
-                # Process first chunk
-                if first_chunk and not self._generation_cancelled:
-                    if "message" in first_chunk and "content" in first_chunk["message"]:
-                        response_text += first_chunk["message"]["content"]
+                    if first_chunk and not self._generation_cancelled:
+                        response_text += first_chunk
                         tokens_generated += 1
                         await assistant_msg.update(f"● {response_text}")
                         chat.scroll_end(animate=False)
 
-                # Continue with rest of stream
-                for chunk in stream:
-                    if self._generation_cancelled:
-                        cancelled = True
-                        break
-
-                    if "message" in chunk and "content" in chunk["message"]:
-                        response_text += chunk["message"]["content"]
+                    for chunk in stream_iter:
+                        if self._generation_cancelled:
+                            cancelled = True
+                            break
+                        response_text += chunk
                         tokens_generated += 1
                         await assistant_msg.update(f"● {response_text}")
                         chat.scroll_end(animate=False)
+                        elapsed = time.time() - start_time
+                        tps = tokens_generated / elapsed if elapsed > 0 else 0
+                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
+                else:
+                    thinking_task = asyncio.create_task(self._animate_thinking(assistant_msg, status, start_time))
+                    try:
+                        result = await asyncio.to_thread(
+                            lambda: self._openai_chat(self.messages, stream=False)
+                        )
+                        if not self._generation_cancelled:
+                            response_text = result["choices"][0]["message"]["content"]
+                            tokens_generated = result.get("usage", {}).get("completion_tokens", len(response_text) // 4)
+                        else:
+                            cancelled = True
+                    finally:
+                        thinking_task.cancel()
+                        try:
+                            await thinking_task
+                        except asyncio.CancelledError:
+                            pass
 
-                    elapsed = time.time() - start_time
-                    tps = tokens_generated / elapsed if elapsed > 0 else 0
-                    status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
+                    if not cancelled:
+                        await assistant_msg.update(f"● {response_text}")
+                        chat.scroll_end(animate=False)
             else:
-                # Non-streaming: show thinking animation
-                thinking_task = asyncio.create_task(self._animate_thinking(assistant_msg, status, start_time))
-                try:
+                # Ollama API
+                if self.streaming:
                     options = {"num_ctx": self.num_ctx, **self.model_options}
-                    result = await asyncio.to_thread(
-                        lambda: self.client.chat(
-                            model=self.model,
-                            messages=self.messages,
-                            stream=False,
-                            options=options,
-                        )
-                    )
-                    if not self._generation_cancelled:
-                        response_text = result["message"]["content"]
-                        tokens_generated = result.get("eval_count", len(response_text) // 4)
-                    else:
-                        cancelled = True
-                finally:
-                    thinking_task.cancel()
-                    try:
-                        await thinking_task
-                    except asyncio.CancelledError:
-                        pass
 
-                if not cancelled:
-                    await assistant_msg.update(f"● {response_text}")
-                    chat.scroll_end(animate=False)
+                    waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
+                    try:
+                        stream = await asyncio.to_thread(
+                            lambda: self.client.chat(
+                                model=self.model,
+                                messages=self.messages,
+                                stream=True,
+                                options=options,
+                            )
+                        )
+                        first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+                    finally:
+                        waiting_task.cancel()
+                        try:
+                            await waiting_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    if first_chunk and not self._generation_cancelled:
+                        if "message" in first_chunk and "content" in first_chunk["message"]:
+                            response_text += first_chunk["message"]["content"]
+                            tokens_generated += 1
+                            await assistant_msg.update(f"● {response_text}")
+                            chat.scroll_end(animate=False)
+
+                    for chunk in stream:
+                        if self._generation_cancelled:
+                            cancelled = True
+                            break
+
+                        if "message" in chunk and "content" in chunk["message"]:
+                            response_text += chunk["message"]["content"]
+                            tokens_generated += 1
+                            await assistant_msg.update(f"● {response_text}")
+                            chat.scroll_end(animate=False)
+
+                        elapsed = time.time() - start_time
+                        tps = tokens_generated / elapsed if elapsed > 0 else 0
+                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
+                else:
+                    thinking_task = asyncio.create_task(self._animate_thinking(assistant_msg, status, start_time))
+                    try:
+                        options = {"num_ctx": self.num_ctx, **self.model_options}
+                        result = await asyncio.to_thread(
+                            lambda: self.client.chat(
+                                model=self.model,
+                                messages=self.messages,
+                                stream=False,
+                                options=options,
+                            )
+                        )
+                        if not self._generation_cancelled:
+                            response_text = result["message"]["content"]
+                            tokens_generated = result.get("eval_count", len(response_text) // 4)
+                        else:
+                            cancelled = True
+                    finally:
+                        thinking_task.cancel()
+                        try:
+                            await thinking_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    if not cancelled:
+                        await assistant_msg.update(f"● {response_text}")
+                        chat.scroll_end(animate=False)
 
             if cancelled:
                 await assistant_msg.update("● *[cancelled]*")
                 if response_text:
-                    # Partial response, still save it
                     self.messages.append({"role": "assistant", "content": response_text})
             else:
                 self.messages.append({"role": "assistant", "content": response_text})

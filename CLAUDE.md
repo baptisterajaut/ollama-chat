@@ -25,6 +25,19 @@ Config stored in `~/.config/ollama-chat/`:
 - `*.conf` - Named config profiles (backups created via setup wizard or `--as-default`)
 - `personalities/` - System prompt templates (`.md` files)
 
+## API modes
+
+The app supports two API modes:
+
+1. **Ollama mode** (default): Uses the Ollama Python client. Supports model listing, `num_ctx`, and `model_options`.
+
+2. **OpenAI mode** (fallback, untested): If Ollama's `/api/tags` endpoint fails, falls back to OpenAI-compatible `/v1/chat/completions`. Works with LM Studio, llama.cpp, vLLM, etc. Limitations:
+   - No model listing (must configure model name manually)
+   - `num_ctx` and `model_options` are ignored
+   - Setup wizard won't work (edit config.conf manually)
+
+Detection happens at startup in `_show_greeting()`. The `self.api_mode` attribute is set to `"ollama"` or `"openai"`.
+
 ## Usage
 
 ```bash
@@ -99,7 +112,8 @@ System prompt templates in `~/.config/ollama-chat/personalities/`. Bundled perso
 
 - Python 3.11 (required for type syntax)
 - Textual for TUI
-- ollama-python for API
+- ollama-python for Ollama API
+- requests for OpenAI-compatible API fallback
 
 ## Debugging
 
@@ -112,6 +126,8 @@ Captures: app start, commands, errors, Textual exceptions.
 ## Gotchas
 
 - **ollama-python global client**: Never use `ollama.chat()`, `ollama.list()` etc. (module-level functions). The library creates its default client at import time using `OLLAMA_HOST` env var — setting the env var after `import ollama` has no effect. Always use an explicit `ollama.Client(host=...)` instance (`self.client` in `OllamaChat`). Host priority: config.conf `[server] host` > `OLLAMA_HOST` env var > `http://localhost:11434`.
+
+- **OpenAI mode**: When adding features that use the Ollama client, always check `self.api_mode` and provide an OpenAI-compatible fallback using `self._openai_chat()`. The OpenAI mode uses raw `requests` calls to `/v1/chat/completions`.
 
 ## Notes for future development
 

@@ -8,6 +8,9 @@ A simple Ollama chat TUI.
 ![License](https://img.shields.io/badge/license-public%20domain-brightgreen)
 ![Vibe](https://img.shields.io/badge/vibe-coded-ff69b4)
 
+![ochat screenshot](.github/ochat.jpg)
+*It's so simple yet I had to do it myself.*
+
 ## Why?
 
 I wanted something like [Open WebUI](https://github.com/open-webui/open-webui) but in terminal. A basic chat interface without needing a full browser eating 8GB of RAM just to exist.
@@ -29,14 +32,14 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - Impersonate mode for roleplay (LLM suggests user responses)
 - Persistent configuration
 - SOME Advanced model options (temperature, top_p, top_k, etc.) via config file
+- OpenAI-compatible API fallback (LM Studio, llama.cpp, vLLM, etc.) - **untested**
 
 ## Non-features
 
 - No SSL support
-- No provider abstraction (Ollama hardcoded)
 - No conversation memory/persistence
 - No multi-model conversations
-- No model templates (chat templates are handled by Ollama)
+- No model templates (chat templates are handled by Ollama/your server)
 - No multiline input (TextArea doesn't support suggesters, and I prefer a single-line input with autocomplete over multiline without it — or making Claude reinvent the wheel and turning this codebase from "only Claude and God understand it" to "only God understands it")
 - No RAG, no agents, no tools
 
@@ -129,18 +132,39 @@ Bundled personalities (copied on first run):
 
 ### Advanced model options
 
-You can add model parameters directly in `config.conf` (empty = inherit from model defaults):
+You can add any Ollama model parameter in `config.conf`. These are passed directly to the API without validation:
 
 ```ini
 [model_options]
-temperature =
-top_p =
-top_k =
-min_p =
-repeat_penalty =
+temperature = 0.7
+top_p = 0.9
+top_k = 40
+min_p = 0.05
+repeat_penalty = 1.1
+# Any other Ollama option works too
 ```
 
-These are not exposed in the setup wizard - edit the config file manually if needed.
+See [Ollama modelfile docs](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values) for available options. Not exposed in the setup wizard - edit the config file manually.
+
+### OpenAI-compatible mode (untested)
+
+If Ollama isn't available at the configured host, the app falls back to OpenAI-compatible API mode. This should work with LM Studio, llama.cpp server, vLLM, text-generation-inference, and other servers exposing the standard `/v1/chat/completions` endpoint.
+
+**Limitations in OpenAI mode:**
+- No model listing (you must configure the model name manually)
+- `num_ctx` and `model_options` are ignored (server-side settings apply)
+- Setup wizard won't work (configure `config.conf` manually)
+
+**To use with LM Studio:**
+```ini
+[server]
+host = http://localhost:1234
+
+[defaults]
+model = your-loaded-model-name
+```
+
+The greeting will show "Connected (OpenAI mode)" when using this fallback.
 
 ## Debugging
 
