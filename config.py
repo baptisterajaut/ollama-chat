@@ -2,6 +2,7 @@
 
 import configparser
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -62,11 +63,7 @@ def list_configs() -> list[str]:
 
 
 def load_config(config_file: Path | None = None) -> dict:
-    """Load configuration from file.
-
-    Args:
-        config_file: Optional path to load from. Defaults to CONFIG_FILE.
-    """
+    """Load configuration from file."""
     config = {
         "host": get_default_host(),
         "model": "llama3.2",
@@ -83,20 +80,13 @@ def load_config(config_file: Path | None = None) -> dict:
         parser = configparser.ConfigParser()
         parser.read(file_to_load)
 
-        if parser.has_option("server", "host"):
-            config["host"] = parser.get("server", "host")
-        if parser.has_option("defaults", "model"):
-            config["model"] = parser.get("defaults", "model")
-        if parser.has_option("defaults", "num_ctx"):
-            config["num_ctx"] = parser.getint("defaults", "num_ctx")
-        if parser.has_option("defaults", "personality"):
-            config["personality"] = parser.get("defaults", "personality")
-        if parser.has_option("defaults", "append_local_prompt"):
-            config["append_local_prompt"] = parser.getboolean("defaults", "append_local_prompt")
-        if parser.has_option("defaults", "streaming"):
-            config["streaming"] = parser.getboolean("defaults", "streaming")
-        if parser.has_option("defaults", "config_name"):
-            config["config_name"] = parser.get("defaults", "config_name")
+        config["host"] = parser.get("server", "host", fallback=config["host"])
+        config["model"] = parser.get("defaults", "model", fallback=config["model"])
+        config["num_ctx"] = parser.getint("defaults", "num_ctx", fallback=config["num_ctx"])
+        config["personality"] = parser.get("defaults", "personality", fallback=config["personality"])
+        config["append_local_prompt"] = parser.getboolean("defaults", "append_local_prompt", fallback=config["append_local_prompt"])
+        config["streaming"] = parser.getboolean("defaults", "streaming", fallback=config["streaming"])
+        config["config_name"] = parser.get("defaults", "config_name", fallback=config["config_name"])
 
         # Load model options (empty string = not set, any key allowed)
         if parser.has_section("model_options"):
@@ -125,12 +115,7 @@ def save_config(
     config_name: str = "",
     config_file: Path | None = None,
 ) -> None:
-    """Save configuration to file.
-
-    Args:
-        config_file: Optional path to save to. Defaults to CONFIG_FILE.
-        config_name: Optional name for this config profile.
-    """
+    """Save configuration to file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     parser = configparser.ConfigParser()
@@ -156,16 +141,28 @@ def save_config(
         parser.write(f)
 
 
-def switch_config_to_default(new_config_name: str) -> tuple[bool, str]:
+def update_config(**overrides) -> None:
+    """Update specific fields in config, preserving other settings."""
+    config = load_config()
+    config.update(overrides)
+    save_config(
+        host=config["host"],
+        model=config["model"],
+        num_ctx=config["num_ctx"],
+        personality=config["personality"],
+        append_local_prompt=config["append_local_prompt"],
+        streaming=config["streaming"],
+        model_options=config["model_options"],
+        config_name=config["config_name"],
+    )
+
+
+def switch_config_to_default(new_config_name: str, interactive: bool = True) -> tuple[bool, str]:
     """Switch a named config to be the default config.conf.
 
     Backs up current config.conf to {config_name}.conf first.
-
-    Args:
-        new_config_name: Name of the config to load (without .conf extension)
-
-    Returns:
-        (success, message)
+    If interactive=True (CLI), prompts for backup name if unset.
+    If interactive=False (TUI), silently defaults to "config-default".
     """
     new_config_file = CONFIG_DIR / f"{new_config_name}.conf"
     if not new_config_file.exists():
@@ -176,22 +173,21 @@ def switch_config_to_default(new_config_name: str) -> tuple[bool, str]:
         current_name = current_config.get("config_name", "")
 
         if not current_name:
-            # First backup: ask for name and check overwrite
-            current_name = input("Name for current config backup [config-default]: ").strip()
+            if interactive:
+                current_name = input("Name for current config backup [config-default]: ").strip()
             if not current_name:
                 current_name = "config-default"
 
             backup_file = CONFIG_DIR / f"{current_name}.conf"
 
-            # Only check overwrite on first backup (when config_name was empty)
-            if backup_file.exists():
+            if interactive and backup_file.exists():
                 confirm = input(f"'{current_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
                 if confirm not in ("y", "yes"):
                     return False, "Cancelled"
         else:
+            # Named config: overwrite its backup silently (it's saving "back home")
             backup_file = CONFIG_DIR / f"{current_name}.conf"
 
-        # Save current config with its name
         save_config(
             current_config["host"], current_config["model"], current_config["num_ctx"],
             current_config["personality"], current_config["append_local_prompt"],
@@ -200,46 +196,14 @@ def switch_config_to_default(new_config_name: str) -> tuple[bool, str]:
         )
         print(f"Backed up current config to {backup_file.name}")
 
-    # Copy new config to config.conf (it keeps its own config_name)
-    import shutil
     shutil.copy(new_config_file, CONFIG_FILE)
     print(f"Switched to config '{new_config_name}'")
 
     return True, f"Now using '{new_config_name}'"
 
 
-def save_personality_choice(personality: str) -> None:
-    """Update only the personality in config, preserving other settings."""
-    config = load_config()
-    save_config(
-        config["host"], config["model"], config["num_ctx"],
-        personality, config["append_local_prompt"], config["streaming"],
-        config["model_options"], config["config_name"]
-    )
-
-
-def save_append_local_prompt(append_local_prompt: bool) -> None:
-    """Update only the append_local_prompt setting."""
-    config = load_config()
-    save_config(
-        config["host"], config["model"], config["num_ctx"],
-        config["personality"], append_local_prompt, config["streaming"],
-        config["model_options"], config["config_name"]
-    )
-
-
-def save_streaming(streaming: bool) -> None:
-    """Update only the streaming setting."""
-    config = load_config()
-    save_config(
-        config["host"], config["model"], config["num_ctx"],
-        config["personality"], config["append_local_prompt"], streaming,
-        config["model_options"], config["config_name"]
-    )
-
-
-def find_project_prompt() -> str | None:
-    """Find project prompt file in current directory."""
+def load_project_prompt() -> str | None:
+    """Load project prompt file from current directory."""
     for name in ["agent.md", "system.md", "system.txt", "AGENT.md"]:
         p = Path(name)
         if p.exists():
@@ -275,7 +239,7 @@ def load_system_prompt(
         personality_name = "default"
 
     if append_local_prompt:
-        project_prompt = find_project_prompt()
+        project_prompt = load_project_prompt()
         if project_prompt:
             combined = f"{personality_content}\n\n---\n\n{project_prompt}"
             return combined, personality_name
@@ -284,11 +248,7 @@ def load_system_prompt(
 
 
 def run_setup(create_new: bool = False) -> None:
-    """Run interactive setup wizard.
-
-    Args:
-        create_new: If True, create a new named config instead of modifying config.conf
-    """
+    """Run interactive setup wizard."""
     if create_new:
         print("ollama-chat - Create new config profile\n")
         config = {

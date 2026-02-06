@@ -65,7 +65,7 @@ cd ollama-chat
 ochat.bat
 ```
 
-Windows support is experimental and untested. The `/copy` command should work (uses `clip.exe`).
+Windows support is experimental and untested.
 
 ## Usage
 

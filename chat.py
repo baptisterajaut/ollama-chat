@@ -5,7 +5,6 @@ import argparse
 import asyncio
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -70,10 +69,8 @@ from config import (
     load_personality,
     list_personalities,
     list_configs,
-    find_project_prompt,
-    save_personality_choice,
-    save_append_local_prompt,
-    save_streaming,
+    load_project_prompt,
+    update_config,
     switch_config_to_default,
     get_default_host,
     run_setup,
@@ -334,61 +331,17 @@ class OllamaChat(App):
 
     async def _handle_copy(self) -> None:
         """Copy last assistant response to clipboard."""
-        # Find last assistant message
         for msg in reversed(self.messages):
             if msg["role"] == "assistant":
-                content = msg["content"]
-                try:
-                    # macOS
-                    proc = subprocess.Popen(
-                        ["pbcopy"],
-                        stdin=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    proc.communicate(content.encode("utf-8"))
-                    if proc.returncode == 0:
-                        await self._show_system_message("Copied to clipboard")
-                        return
-                except FileNotFoundError:
-                    pass
-
-                try:
-                    # Linux with xclip
-                    proc = subprocess.Popen(
-                        ["xclip", "-selection", "clipboard"],
-                        stdin=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    proc.communicate(content.encode("utf-8"))
-                    if proc.returncode == 0:
-                        await self._show_system_message("Copied to clipboard")
-                        return
-                except FileNotFoundError:
-                    pass
-
-                try:
-                    # Windows with clip.exe
-                    proc = subprocess.Popen(
-                        ["clip"],
-                        stdin=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    proc.communicate(content.encode("utf-16"))
-                    if proc.returncode == 0:
-                        await self._show_system_message("Copied to clipboard")
-                        return
-                except FileNotFoundError:
-                    pass
-
-                await self._show_system_message("Copy failed: no clipboard tool found (pbcopy/xclip/clip)")
+                self.copy_to_clipboard(msg["content"])
+                await self._show_system_message("Copied to clipboard")
                 return
-
         await self._show_system_message("Nothing to copy")
 
     async def _handle_project_toggle(self) -> None:
         """Toggle append_local_prompt and reload system prompt."""
         self.append_local_prompt = not self.append_local_prompt
-        save_append_local_prompt(self.append_local_prompt)
+        update_config(append_local_prompt=self.append_local_prompt)
 
         if self.personality_name:
             new_prompt, _ = load_system_prompt(
@@ -400,11 +353,11 @@ class OllamaChat(App):
             if new_prompt:
                 self.messages.insert(0, {"role": "system", "content": new_prompt})
 
-        project_file = find_project_prompt()
+        project_content = load_project_prompt()
         status = "ON" if self.append_local_prompt else "OFF"
-        if project_file and self.append_local_prompt:
+        if project_content and self.append_local_prompt:
             await self._show_system_message(f"Local prompt: **{status}** (appended to system prompt)")
-        elif project_file:
+        elif project_content:
             await self._show_system_message(f"Local prompt: **{status}** (ignored)")
         else:
             await self._show_system_message(f"Local prompt: **{status}** (no file found)")
@@ -447,7 +400,7 @@ class OllamaChat(App):
                 return
 
         # Switch config and restart
-        success, msg = switch_config_to_default(selected_config)
+        success, msg = switch_config_to_default(selected_config, interactive=False)
         if not success:
             await self._show_system_message(f"Error: {msg}")
             return
@@ -492,22 +445,11 @@ class OllamaChat(App):
         input_widget.disabled = True
 
         try:
-            if self.api_mode == "openai":
-                result = await asyncio.to_thread(
-                    lambda: self._openai_chat(impersonate_messages)
-                )
-                response = result.choices[0].message.content.strip()
-            else:
-                options = {"num_ctx": self.num_ctx, **self.model_options}
-                result = await asyncio.to_thread(
-                    lambda: self.ollama_client.chat(
-                        model=self.model,
-                        messages=impersonate_messages,
-                        stream=False,
-                        options=options,
-                    )
-                )
-                response = result["message"]["content"].strip()
+            result = await asyncio.to_thread(
+                lambda: self._chat_call(impersonate_messages, stream=False)
+            )
+            response, _ = self._extract_result(result)
+            response = response.strip()
             # Remove quotes if the model wrapped the response
             if response.startswith('"') and response.endswith('"'):
                 response = response[1:-1]
@@ -560,7 +502,7 @@ class OllamaChat(App):
             await self._show_system_message(f"Error: unable to load '{new_personality}'")
             return
 
-        save_personality_choice(new_personality)
+        update_config(personality=new_personality)
 
         # If conversation has started, restart app to apply cleanly
         has_conversation = any(m["role"] in ("user", "assistant") for m in self.messages)
@@ -596,21 +538,32 @@ class OllamaChat(App):
 
         await self._generate_response()
 
-    def _openai_chat_stream(self, messages: list[dict]):
-        """Stream chat completion via OpenAI client."""
-        return self.openai_client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
+    def _chat_call(self, messages: list[dict], stream: bool):
+        """Make API call, return stream iterator or result."""
+        if self.api_mode == "openai":
+            return self.openai_client.chat.completions.create(
+                model=self.model, messages=messages, stream=stream,
+            )
+        options = {"num_ctx": self.num_ctx, **self.model_options}
+        return self.ollama_client.chat(
+            model=self.model, messages=messages, stream=stream, options=options,
         )
 
-    def _openai_chat(self, messages: list[dict]):
-        """Non-streaming chat completion via OpenAI client."""
-        return self.openai_client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=False,
-        )
+    def _extract_chunk(self, chunk) -> str:
+        """Extract text content from a streaming chunk."""
+        if self.api_mode == "openai":
+            return chunk.choices[0].delta.content or ""
+        return chunk.get("message", {}).get("content", "")
+
+    def _extract_result(self, result) -> tuple[str, int]:
+        """Extract (content, token_count) from a non-streaming result."""
+        if self.api_mode == "openai":
+            content = result.choices[0].message.content
+            tokens = getattr(result.usage, "completion_tokens", None) or len(content) // 4
+            return content, tokens
+        content = result["message"]["content"]
+        tokens = result.get("eval_count", len(content) // 4)
+        return content, tokens
 
     async def _generate_response(self) -> None:
         """Generate assistant response (streaming or not)."""
@@ -630,135 +583,65 @@ class OllamaChat(App):
         cancelled = False
 
         try:
-            if self.api_mode == "openai":
-                # OpenAI-compatible API
-                if self.streaming:
-                    waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
+            if self.streaming:
+                spinner = asyncio.create_task(
+                    self._animate_spinner(assistant_msg, status, start_time, "waiting for first token")
+                )
+                try:
+                    stream = await asyncio.to_thread(
+                        lambda: self._chat_call(self.messages, stream=True)
+                    )
+                    first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+                finally:
+                    spinner.cancel()
                     try:
-                        stream = await asyncio.to_thread(
-                            lambda: self._openai_chat_stream(self.messages)
-                        )
-                        first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-                    finally:
-                        waiting_task.cancel()
-                        try:
-                            await waiting_task
-                        except asyncio.CancelledError:
-                            pass
+                        await spinner
+                    except asyncio.CancelledError:
+                        pass
 
-                    if first_chunk and not self._generation_cancelled:
-                        content = first_chunk.choices[0].delta.content or ""
-                        if content:
-                            response_text += content
-                            tokens_generated += 1
-                            await assistant_msg.update(f"● {response_text}")
-                            chat.scroll_end(animate=False)
-
-                    for chunk in stream:
-                        if self._generation_cancelled:
-                            cancelled = True
-                            break
-                        content = chunk.choices[0].delta.content or ""
-                        if content:
-                            response_text += content
-                            tokens_generated += 1
-                            await assistant_msg.update(f"● {response_text}")
-                            chat.scroll_end(animate=False)
-                        elapsed = time.time() - start_time
-                        tps = tokens_generated / elapsed if elapsed > 0 else 0
-                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
-                else:
-                    thinking_task = asyncio.create_task(self._animate_thinking(assistant_msg, status, start_time))
-                    try:
-                        result = await asyncio.to_thread(
-                            lambda: self._openai_chat(self.messages)
-                        )
-                        if not self._generation_cancelled:
-                            response_text = result.choices[0].message.content
-                            tokens_generated = getattr(result.usage, "completion_tokens", None) or len(response_text) // 4
-                        else:
-                            cancelled = True
-                    finally:
-                        thinking_task.cancel()
-                        try:
-                            await thinking_task
-                        except asyncio.CancelledError:
-                            pass
-
-                    if not cancelled:
+                if first_chunk and not self._generation_cancelled:
+                    content = self._extract_chunk(first_chunk)
+                    if content:
+                        response_text += content
+                        tokens_generated += 1
                         await assistant_msg.update(f"● {response_text}")
                         chat.scroll_end(animate=False)
+
+                for chunk in stream:
+                    if self._generation_cancelled:
+                        cancelled = True
+                        break
+                    content = self._extract_chunk(chunk)
+                    if content:
+                        response_text += content
+                        tokens_generated += 1
+                        await assistant_msg.update(f"● {response_text}")
+                        chat.scroll_end(animate=False)
+                    elapsed = time.time() - start_time
+                    tps = tokens_generated / elapsed if elapsed > 0 else 0
+                    status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
             else:
-                # Ollama API
-                if self.streaming:
-                    options = {"num_ctx": self.num_ctx, **self.model_options}
-
-                    waiting_task = asyncio.create_task(self._animate_waiting(assistant_msg, status, start_time))
+                spinner = asyncio.create_task(
+                    self._animate_spinner(assistant_msg, status, start_time, "thinking")
+                )
+                try:
+                    result = await asyncio.to_thread(
+                        lambda: self._chat_call(self.messages, stream=False)
+                    )
+                    if not self._generation_cancelled:
+                        response_text, tokens_generated = self._extract_result(result)
+                    else:
+                        cancelled = True
+                finally:
+                    spinner.cancel()
                     try:
-                        stream = await asyncio.to_thread(
-                            lambda: self.ollama_client.chat(
-                                model=self.model,
-                                messages=self.messages,
-                                stream=True,
-                                options=options,
-                            )
-                        )
-                        first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-                    finally:
-                        waiting_task.cancel()
-                        try:
-                            await waiting_task
-                        except asyncio.CancelledError:
-                            pass
+                        await spinner
+                    except asyncio.CancelledError:
+                        pass
 
-                    if first_chunk and not self._generation_cancelled:
-                        if "message" in first_chunk and "content" in first_chunk["message"]:
-                            response_text += first_chunk["message"]["content"]
-                            tokens_generated += 1
-                            await assistant_msg.update(f"● {response_text}")
-                            chat.scroll_end(animate=False)
-
-                    for chunk in stream:
-                        if self._generation_cancelled:
-                            cancelled = True
-                            break
-
-                        if "message" in chunk and "content" in chunk["message"]:
-                            response_text += chunk["message"]["content"]
-                            tokens_generated += 1
-                            await assistant_msg.update(f"● {response_text}")
-                            chat.scroll_end(animate=False)
-
-                        elapsed = time.time() - start_time
-                        tps = tokens_generated / elapsed if elapsed > 0 else 0
-                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
-                else:
-                    thinking_task = asyncio.create_task(self._animate_thinking(assistant_msg, status, start_time))
-                    try:
-                        options = {"num_ctx": self.num_ctx, **self.model_options}
-                        result = await asyncio.to_thread(
-                            lambda: self.ollama_client.chat(
-                                model=self.model,
-                                messages=self.messages,
-                                stream=False,
-                                options=options,
-                            )
-                        )
-                        if not self._generation_cancelled:
-                            response_text = result["message"]["content"]
-                            tokens_generated = result.get("eval_count", len(response_text) // 4)
-                        else:
-                            cancelled = True
-                    finally:
-                        thinking_task.cancel()
-                        try:
-                            await thinking_task
-                        except asyncio.CancelledError:
-                            pass
-
-                    if not cancelled:
-                        await assistant_msg.update(f"● {response_text}")
-                        chat.scroll_end(animate=False)
+                if not cancelled:
+                    await assistant_msg.update(f"● {response_text}")
+                    chat.scroll_end(animate=False)
 
             if cancelled:
                 await assistant_msg.update("● *[cancelled]*")
@@ -778,25 +661,14 @@ class OllamaChat(App):
         self.is_generating = False
         status.update(self._status_text())
 
-    async def _animate_thinking(self, msg: Message, status: Static, start_time: float) -> None:
-        """Animate thinking indicator."""
+    async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:
+        """Animate spinner indicator with given label."""
         frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         i = 0
         while True:
             elapsed = time.time() - start_time
-            await msg.update(f"● {frames[i]} thinking...")
-            status.update(self._status_text(f"thinking... {elapsed:.1f}s"))
-            i = (i + 1) % len(frames)
-            await asyncio.sleep(0.1)
-
-    async def _animate_waiting(self, msg: Message, status: Static, start_time: float) -> None:
-        """Animate waiting for first token indicator."""
-        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        i = 0
-        while True:
-            elapsed = time.time() - start_time
-            await msg.update(f"● {frames[i]} waiting for first token...")
-            status.update(self._status_text(f"waiting... {elapsed:.1f}s"))
+            await msg.update(f"● {frames[i]} {label}...")
+            status.update(self._status_text(f"{label}... {elapsed:.1f}s"))
             i = (i + 1) % len(frames)
             await asyncio.sleep(0.1)
 
@@ -823,7 +695,7 @@ class OllamaChat(App):
     def action_toggle_streaming(self) -> None:
         """Toggle streaming mode."""
         self.streaming = not self.streaming
-        save_streaming(self.streaming)
+        update_config(streaming=self.streaming)
         mode = "ON" if self.streaming else "OFF"
         self.notify(f"Streaming: {mode}", timeout=2)
 

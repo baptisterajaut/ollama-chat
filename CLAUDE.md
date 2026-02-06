@@ -62,8 +62,8 @@ Named config profiles allow switching between different setups (models, personal
 5. **Switch in-app**: `/config` lists profiles, `/config <n>` switches and restarts
 
 When switching with `--as-default`:
-- Current `config.conf` is renamed to `{config_name}.conf` (prompts for name if unset, default: "config-default")
-- Asks confirmation before overwriting existing backup
+- Current `config.conf` is backed up to `{config_name}.conf` (prompts for name if unset from CLI, defaults to "config-default" from TUI)
+- Asks confirmation before overwriting existing backup (CLI only)
 - The chosen config becomes the new `config.conf`
 
 Config name is shown in greeting: `config: mistral-creative · Connected`
@@ -128,7 +128,7 @@ Captures: app start, commands, errors, Textual exceptions.
 
 - **ollama-python global client**: Never use `ollama.chat()`, `ollama.list()` etc. (module-level functions). The library creates its default client at import time using `OLLAMA_HOST` env var — setting the env var after `import ollama` has no effect. Always use an explicit `ollama.Client(host=...)` instance (`self.client` in `OllamaChat`). Host priority: config.conf `[server] host` > `OLLAMA_HOST` env var > `http://localhost:11434`.
 
-- **OpenAI mode**: When adding features that use the Ollama client, always check `self.api_mode` and provide an OpenAI-compatible fallback using `self._openai_chat()` or `self._openai_chat_stream()`. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
+- **OpenAI mode**: API mode branching is handled by three helpers: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
 
 ## Notes for future development
 
