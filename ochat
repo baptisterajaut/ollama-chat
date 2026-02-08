@@ -17,4 +17,11 @@ if [ ! -d "$SCRIPT_DIR/.venv" ]; then
     echo "Done."
 fi
 
+# Update dependencies if requirements.txt changed
+MARKER="$SCRIPT_DIR/.venv/.deps-installed"
+if [ ! -f "$MARKER" ] || [ "$SCRIPT_DIR/requirements.txt" -nt "$MARKER" ]; then
+    "$SCRIPT_DIR/.venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+    touch "$MARKER"
+fi
+
 exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/chat.py" "$@"

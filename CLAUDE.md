@@ -33,11 +33,12 @@ The app supports two API modes:
 1. **Ollama mode** (default): Uses the Ollama Python client. Supports model listing, `num_ctx`, and `model_options`.
 
 2. **OpenAI mode** (fallback, untested): If Ollama's `/api/tags` endpoint fails, falls back to the `openai` Python client with custom `base_url`. Works with LM Studio, llama.cpp, vLLM, etc. Limitations:
-   - No model listing (must configure model name manually)
+   - No interactive model selection (model listing is used for connection testing only — must configure model name manually)
    - `num_ctx` and `model_options` are ignored
+   - Context usage tracking is disabled (percentages and warnings don't apply)
    - Setup wizard won't work (edit config.conf manually)
 
-Detection happens at startup in `_show_greeting()`. The `self.api_mode` attribute is set to `"ollama"` or `"openai"`.
+Detection happens at startup in `_show_greeting()`. The `self.api_mode` attribute is set to `"ollama"` or `"openai"`. The OpenAI client is lazily initialized (only created when Ollama connection fails).
 
 ## Usage
 
@@ -50,6 +51,7 @@ ochat -C / --config                # Interactive setup wizard (modify current)
 ochat --new                        # Create a new named config profile
 ochat --use-config <name>          # Use named config for this session
 ochat --use-config <name> --as-default  # Switch to named config as new default
+ochat -d                               # Enable debug logging
 ```
 
 ## Multiple configs
@@ -125,7 +127,12 @@ System prompt templates in `~/.config/ollama-chat/personalities/`. Bundled perso
 
 ## Debugging
 
-Logs are written to a temp file for debugging:
+Logging is disabled by default. Enable with `-d` flag:
+```bash
+ochat -d
+```
+
+Log files are written to temp (auto-cleaned after 7 days):
 - **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
 - **Windows**: `%TEMP%/ollama-chat-YYYYMMDD-HHMMSS.log`
 
@@ -137,7 +144,11 @@ Captures: app start, commands, errors, Textual exceptions.
 
 - **SSL verification**: `verify_ssl` in `[server]` controls SSL certificate verification. Only written to config when `false` (default is `true`/absent). When `false`, `ollama.Client` gets `verify=False` and `openai.OpenAI` gets a custom `httpx.Client(verify=False)`. The setup wizard auto-detects SSL errors on HTTPS hosts and offers to disable verification.
 
+- **OpenAI client lazy init**: `self.openai_client` is a `@property` that lazily creates the OpenAI client on first access. Don't assign to it directly.
+
 - **OpenAI mode**: API mode branching is handled by three helpers: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
+
+- **Async stream iteration**: Stream chunks are fetched via `self._anext(stream)` which wraps `next()` in `asyncio.to_thread` to avoid blocking the Textual event loop. Never iterate a stream synchronously (`for chunk in stream`) in async code.
 
 ## Generation modes
 
@@ -151,6 +162,7 @@ Both modes start with a "waiting for first token" spinner and track TTFT.
 ## Context tracking
 
 - Token count is approximated (~4 chars/token from all messages, 1 chunk ≈ 1 token for generated output)
+- Context tracking is disabled in OpenAI mode (`_context_pct()` returns 0) since `num_ctx` is not applicable
 - Context usage percentage shown in `/context` and `/stats`
 - Status bar shows `ctx: N% remaining` when usage exceeds 85%
 - Status bar shows `⚠ Context length probably exceeded` when over 100%

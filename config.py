@@ -99,11 +99,17 @@ def load_config(config_file: Path | None = None) -> dict:
             for key in parser.options("model_options"):
                 val = parser.get("model_options", key).strip()
                 if val:
-                    # Try to convert to number, otherwise keep as string
-                    try:
-                        model_options[key] = float(val)
-                    except ValueError:
-                        model_options[key] = val
+                    # Try to convert: bool, int, float, fallback to string
+                    if val.lower() in ("true", "false"):
+                        model_options[key] = val.lower() == "true"
+                    else:
+                        try:
+                            model_options[key] = int(val)
+                        except ValueError:
+                            try:
+                                model_options[key] = float(val)
+                            except ValueError:
+                                model_options[key] = val
             config["model_options"] = model_options
 
     return config

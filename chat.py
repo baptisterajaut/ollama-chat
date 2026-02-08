@@ -18,14 +18,23 @@ import openai
 # Add script directory to path for imports when called from elsewhere
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Setup logging to temp file
-_log_file = Path(tempfile.gettempdir()) / f"ollama-chat-{datetime.now():%Y%m%d-%H%M%S}.log"
-logging.basicConfig(
-    filename=str(_log_file),
-    level=logging.DEBUG,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+# Logging (file handler configured by -d flag in main())
 _log = logging.getLogger(__name__)
+_log.addHandler(logging.NullHandler())
+_log_file = None
+
+
+def _cleanup_old_logs():
+    """Remove log files older than 7 days."""
+    log_dir = Path(tempfile.gettempdir())
+    cutoff = time.time() - 7 * 86400
+    for f in log_dir.glob("ollama-chat-*.log"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
+
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -79,6 +88,9 @@ from config import (
     get_default_host,
     run_setup,
 )
+
+# Sentinel for async stream iteration
+_STREAM_DONE = object()
 
 
 class Message(Markdown):
@@ -139,14 +151,7 @@ class OllamaChat(App):
         self.host = host or "http://localhost:11434"
         self.verify_ssl = verify_ssl
         self.ollama_client = ollama.Client(host=host, verify=verify_ssl)
-        if verify_ssl:
-            self.openai_client = openai.OpenAI(base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed")
-        else:
-            import httpx
-            self.openai_client = openai.OpenAI(
-                base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed",
-                http_client=httpx.Client(verify=False),
-            )
+        self._openai_client = None  # lazily initialized via property
         self.api_mode = "ollama"  # "ollama" or "openai"
         self.messages: list[dict] = []
         self.is_generating = False
@@ -160,6 +165,22 @@ class OllamaChat(App):
         self.sys_instructions = self._load_system_instructions()
         if system_prompt:
             self.messages.append({"role": "system", "content": system_prompt})
+
+    @property
+    def openai_client(self):
+        """Lazy-initialize OpenAI client only when needed."""
+        if self._openai_client is None:
+            if self.verify_ssl:
+                self._openai_client = openai.OpenAI(
+                    base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed"
+                )
+            else:
+                import httpx
+                self._openai_client = openai.OpenAI(
+                    base_url=f"{self.host.rstrip('/')}/v1", api_key="not-needed",
+                    http_client=httpx.Client(verify=False),
+                )
+        return self._openai_client
 
     @staticmethod
     def _load_system_instructions() -> dict:
@@ -216,7 +237,7 @@ class OllamaChat(App):
 
     def _context_pct(self) -> float:
         """Estimated context usage as percentage."""
-        if self.num_ctx <= 0:
+        if self.num_ctx <= 0 or self.api_mode == "openai":
             return 0.0
         return self._estimate_context_tokens() / self.num_ctx * 100
 
@@ -354,6 +375,8 @@ class OllamaChat(App):
             if arg:
                 self.messages.append({"role": "system", "content": arg})
                 await self._show_system_message(f"*[injected]* {arg}")
+            else:
+                await self._show_system_message("Usage: `/sys <message>`")
             return True
 
         elif cmd in ("/model", "/m"):
@@ -398,11 +421,12 @@ class OllamaChat(App):
 
         self.messages.pop()
 
-        # Remove last message widget from chat
+        # Remove last assistant message widget from chat
         chat = self.query_one("#chat", ChatContainer)
-        children = list(chat.children)
-        if children:
-            await children[-1].remove()
+        for child in reversed(list(chat.children)):
+            if isinstance(child, Message) and child.role == "assistant":
+                await child.remove()
+                break
 
         # Regenerate
         await self._generate_response()
@@ -599,7 +623,10 @@ class OllamaChat(App):
                         summary += content
                         chunks += 1
 
-                    for chunk in stream:
+                    while True:
+                        chunk = await self._anext(stream)
+                        if chunk is _STREAM_DONE:
+                            break
                         content = self._extract_chunk(chunk)
                         if content:
                             summary += content
@@ -671,6 +698,7 @@ class OllamaChat(App):
         has_conversation = any(m["role"] in ("user", "assistant") for m in self.messages)
         if has_conversation:
             await self._restart_app()
+            return
 
         # No conversation yet, just swap the prompt
         self.personality_name = new_personality
@@ -762,9 +790,10 @@ class OllamaChat(App):
                     await assistant_msg.update(f"● {response_text}")
                     chat.scroll_end(animate=False)
 
-                    for chunk in stream:
-                        if self._generation_cancelled:
-                            cancelled = True
+                    while True:
+                        chunk = await self._anext(stream)
+                        if chunk is _STREAM_DONE or self._generation_cancelled:
+                            cancelled = self._generation_cancelled
                             break
                         content = self._extract_chunk(chunk)
                         if content:
@@ -777,9 +806,10 @@ class OllamaChat(App):
                         status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
                 else:
                     # Buffer response, show "thinking" with chunk count
-                    for chunk in stream:
-                        if self._generation_cancelled:
-                            cancelled = True
+                    while True:
+                        chunk = await self._anext(stream)
+                        if chunk is _STREAM_DONE or self._generation_cancelled:
+                            cancelled = self._generation_cancelled
                             break
                         content = self._extract_chunk(chunk)
                         if content:
@@ -811,8 +841,9 @@ class OllamaChat(App):
             response_text = f"**Error:** {e}"
             await assistant_msg.update(f"● {response_text}")
 
-        self.is_generating = False
-        status.update(self._status_text())
+        finally:
+            self.is_generating = False
+            status.update(self._status_text())
 
         # One-shot context warning
         if not self._context_warning_shown and self._context_pct() > 80:
@@ -843,14 +874,22 @@ class OllamaChat(App):
                 pass
         return stream, first_chunk
 
+    async def _anext(self, iterator):
+        """Get next item from sync iterator without blocking event loop."""
+        return await asyncio.to_thread(lambda: next(iterator, _STREAM_DONE))
+
     async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:
         """Animate spinner indicator with given label."""
         i = 0
         while True:
             elapsed = time.time() - start_time
-            await msg.update(f"● {self.SPINNER_FRAMES[i]} {label}...")
+            if self._generation_cancelled:
+                await msg.update(f"● {self.SPINNER_FRAMES[i]} cancelling...")
+                status.update(self._status_text("cancelling..."))
+            else:
+                await msg.update(f"● {self.SPINNER_FRAMES[i]} {label}...")
+                status.update(self._status_text(f"{label}... {elapsed:.1f}s"))
             self.query_one("#chat", ChatContainer).scroll_end(animate=False)
-            status.update(self._status_text(f"{label}... {elapsed:.1f}s"))
             i = (i + 1) % len(self.SPINNER_FRAMES)
             await asyncio.sleep(0.1)
 
@@ -861,8 +900,9 @@ class OllamaChat(App):
     def action_focus_input(self) -> None:
         """Keep focus on input and accept suggestion if any."""
         input_widget = self.query_one("#chat-input", Input)
-        if input_widget._suggestion:
-            input_widget.value = input_widget._suggestion
+        suggestion = getattr(input_widget, "suggestion", "") or ""
+        if suggestion:
+            input_widget.value = suggestion
             input_widget.cursor_position = len(input_widget.value)
         input_widget.focus()
 
@@ -893,7 +933,7 @@ class OllamaChat(App):
 
 
 def main():
-    _log.info(f"Starting ollama-chat, log file: {_log_file}")
+    global _log_file
 
     # First run: launch setup wizard
     if not CONFIG_FILE.exists():
@@ -941,8 +981,22 @@ def main():
         action="store_true",
         help="Create a new named config profile"
     )
+    parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="Enable debug logging to temp file"
+    )
 
     args = parser.parse_args()
+
+    if args.debug:
+        _log_file = Path(tempfile.gettempdir()) / f"ollama-chat-{datetime.now():%Y%m%d-%H%M%S}.log"
+        handler = logging.FileHandler(str(_log_file))
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        _log.setLevel(logging.DEBUG)
+        _log.addHandler(handler)
+        _log.info(f"Debug logging enabled, log file: {_log_file}")
+        _cleanup_old_logs()
 
     if args.new:
         run_setup(create_new=True)

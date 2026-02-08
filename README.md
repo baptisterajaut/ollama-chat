@@ -79,6 +79,7 @@ ochat -m llama3.2        # Override model
 ochat --new              # Create a new named config profile
 ochat --use-config NAME  # Use a named config for this session
 ochat --use-config NAME --as-default  # Switch to named config permanently
+ochat -d                 # Enable debug logging
 ochat --help             # Show options
 ```
 
@@ -157,8 +158,9 @@ See [Ollama docs](https://docs.ollama.com/modelfile#valid-parameters-and-values)
 If Ollama isn't available at the configured host, the app falls back to OpenAI-compatible API mode. This should work with LM Studio, llama.cpp server, vLLM, text-generation-inference, and other servers exposing the standard `/v1/chat/completions` endpoint.
 
 **Limitations in OpenAI mode:**
-- No model listing (you must configure the model name manually)
+- No interactive model selection (model listing is used for connection testing only — you must configure the model name manually)
 - `num_ctx` and `model_options` are ignored (server-side settings apply)
+- Context usage tracking is disabled (percentages and warnings don't apply)
 - Setup wizard won't work (configure `config.conf` manually)
 
 **To use with LM Studio:**
@@ -184,7 +186,13 @@ The greeting will show "Connected (OpenAI mode)" when using this fallback.
 
 ## Debugging
 
-Logs are written to a temp file:
+Logging is disabled by default. Use `-d` to enable:
+
+```bash
+ochat -d
+```
+
+Log files are written to temp (auto-cleaned after 7 days):
 - **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
 - **Windows**: `%TEMP%\ollama-chat-YYYYMMDD-HHMMSS.log`
 
