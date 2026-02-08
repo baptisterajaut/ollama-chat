@@ -12,4 +12,4 @@ if not exist "%SCRIPT_DIR%.venv" (
     echo Done.
 )
 
-"%SCRIPT_DIR%.venv\Scripts\python" "%SCRIPT_DIR%chat.py" %*
+"%SCRIPT_DIR%.venv\Scripts\python" "%SCRIPT_DIR%ochat.py" %*
