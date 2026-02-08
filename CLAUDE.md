@@ -6,17 +6,23 @@ Simple TUI chat client for Ollama with custom system prompt support.
 
 ```
 ollama-chat/
-├── chat.py          # Main application (Textual TUI)
-├── chat.tcss        # Textual CSS styles
-├── config.py        # Configuration management, personalities
-├── system_instructions.json  # LLM instructions for commands (compact, impersonate)
-├── ochat            # Launcher script (symlinked to ~/bin/ochat)
-├── requirements.txt # Dependencies: textual, ollama
-├── personalities/   # Bundled personality templates (copied on first run)
+├── ochat.py                    # Entry point
+├── ochat.sh                    # Bash launcher (symlinked to ~/bin/ochat)
+├── ochat/                      # Package
+│   ├── __init__.py             # NullHandler logging
+│   ├── app.py                  # OllamaChat class, main()
+│   ├── commands.py             # CommandsMixin (_handle_*)
+│   ├── generation.py           # GenerationMixin (streaming, _generate_response)
+│   ├── widgets.py              # Message, ChatContainer, CommandSuggester
+│   ├── config.py               # Configuration management, personalities
+│   └── chat.tcss               # Textual CSS styles
+├── system_instructions.json    # LLM instructions for commands (compact, impersonate)
+├── personalities/              # Bundled personality templates (copied on first run)
 │   ├── default.md
 │   ├── creative.md
 │   └── storyteller.md
-└── .venv/           # Python 3.11 virtual environment
+├── requirements.txt            # Dependencies: textual, ollama
+└── .venv/                      # Python 3.11 virtual environment
 ```
 
 ## Configuration
@@ -138,6 +144,8 @@ Log files are written to temp (auto-cleaned after 7 days):
 
 Captures: app start, commands, errors, Textual exceptions.
 
+Logging uses the `"ochat"` logger hierarchy. Each module uses `_log = logging.getLogger(__name__)` (gives `ochat.app`, `ochat.commands`, etc.). The `-d` flag configures the parent `"ochat"` logger with a FileHandler.
+
 ## Gotchas
 
 - **ollama-python global client**: Never use `ollama.chat()`, `ollama.list()` etc. (module-level functions). The library creates its default client at import time using `OLLAMA_HOST` env var — setting the env var after `import ollama` has no effect. Always use an explicit `ollama.Client(host=...)` instance (`self.client` in `OllamaChat`). Host priority: config.conf `[server] host` > `OLLAMA_HOST` env var > `http://localhost:11434`.
@@ -146,7 +154,7 @@ Captures: app start, commands, errors, Textual exceptions.
 
 - **OpenAI client lazy init**: `self.openai_client` is a `@property` that lazily creates the OpenAI client on first access. Don't assign to it directly.
 
-- **OpenAI mode**: API mode branching is handled by three helpers: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
+- **OpenAI mode**: API mode branching is handled by three helpers in `GenerationMixin`: `self._chat_call(messages, stream)` makes the API call, `self._extract_chunk(chunk)` extracts text from streaming chunks, and `self._extract_result(result)` extracts (content, token_count) from non-streaming results. When adding features that call the LLM, use these helpers instead of calling `self.ollama_client` or `self.openai_client` directly. The OpenAI mode uses the official `openai` Python client with a custom `base_url`.
 
 - **Async stream iteration**: Stream chunks are fetched via `self._anext(stream)` which wraps `next()` in `asyncio.to_thread` to avoid blocking the Textual event loop. Never iterate a stream synchronously (`for chunk in stream`) in async code.
 

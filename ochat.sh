@@ -24,4 +24,4 @@ if [ ! -f "$MARKER" ] || [ "$SCRIPT_DIR/requirements.txt" -nt "$MARKER" ]; then
     touch "$MARKER"
 fi
 
-exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/chat.py" "$@"
+exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/ochat.py" "$@"

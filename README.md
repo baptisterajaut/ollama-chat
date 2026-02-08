@@ -55,7 +55,7 @@ git clone https://github.com/youruser/ollama-chat
 cd ollama-chat
 
 # Optional: symlink to your bin
-ln -s "$(pwd)/ochat" ~/bin/ochat
+ln -s "$(pwd)/ochat.sh" ~/bin/ochat
 ```
 
 The virtual environment and dependencies are created automatically on first run.

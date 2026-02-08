@@ -15,7 +15,7 @@ CONFIG_FILE = CONFIG_DIR / "config.conf"
 PERSONALITIES_DIR = CONFIG_DIR / "personalities"
 
 # Bundled personalities (shipped with the app)
-BUNDLED_PERSONALITIES_DIR = Path(__file__).parent / "personalities"
+BUNDLED_PERSONALITIES_DIR = Path(__file__).parent.parent / "personalities"
 
 # Default config values (single source of truth)
 DEFAULT_CONFIG = {
