@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
 import os
@@ -102,6 +103,7 @@ class OllamaChat(App):
     """Simple TUI chat for Ollama."""
 
     CSS_PATH = "chat.tcss"
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     BINDINGS = [
         Binding("ctrl+c", "clear_input", "Clear input", show=False),
@@ -190,6 +192,28 @@ class OllamaChat(App):
         """Rough token estimate for all messages (~4 chars/token)."""
         return sum(len(m["content"]) // 4 for m in self.messages)
 
+    def _reset_stats(self) -> None:
+        """Reset generation stats and context warning."""
+        self.total_tokens = 0
+        self.last_gen_time = 0.0
+        self.last_tokens = 0
+        self.last_ttft = 0.0
+        self._context_warning_shown = False
+
+    @asynccontextmanager
+    async def _generating_lock(self):
+        """Context manager: set is_generating, disable input, restore on exit."""
+        self.is_generating = True
+        input_widget = self.query_one("#chat-input", Input)
+        input_widget.disabled = True
+        try:
+            yield
+        finally:
+            input_widget.disabled = False
+            self.is_generating = False
+            self.query_one("#status", Static).update(self._status_text())
+            input_widget.focus()
+
     def _context_pct(self) -> float:
         """Estimated context usage as percentage."""
         if self.num_ctx <= 0:
@@ -237,39 +261,33 @@ class OllamaChat(App):
         chat = self.query_one("#chat", ChatContainer)
         config_line = f"config: {self.config_name} · " if self.config_name else ""
 
-        # Try Ollama first
+        # Try Ollama first, then OpenAI fallback
+        mode_label = ""
         try:
             await asyncio.to_thread(lambda: self.ollama_client.list())
             self.api_mode = "ollama"
             _log.info("Connected in Ollama mode")
-            logo = f"""\
- ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  ___   ___| |__   __ _| |_
- / _ \\ / __| '_ \\ / _` | __|
-| (_) | (__| | | | (_| | |_
- \\___/ \\___|_| |_|\\__,_|\\__|
-
-{config_line}Connected · /help for commands"""
+            mode_label = "Connected"
         except Exception as e:
             _log.info(f"Ollama list failed ({e}), trying OpenAI fallback")
-            # Fallback: check if OpenAI-compatible endpoint responds
             try:
                 await asyncio.to_thread(lambda: self.openai_client.models.list())
                 self.api_mode = "openai"
                 _log.info("Connected in OpenAI-compatible mode")
-                logo = f"""\
- ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  ___   ___| |__   __ _| |_
- / _ \\ / __| '_ \\ / _` | __|
-| (_) | (__| | | | (_| | |_
- \\___/ \\___|_| |_|\\__,_|\\__|
-
-{config_line}Connected (OpenAI mode) · /help for commands"""
+                mode_label = "Connected (OpenAI mode)"
             except Exception as e2:
                 _log.warning(f"OpenAI fallback failed: {e2}")
                 await self._show_system_message("Warning: Cannot connect to server")
                 return
 
+        logo = f"""\
+ ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  ___   ___| |__   __ _| |_
+ / _ \\ / __| '_ \\ / _` | __|
+| (_) | (__| | | | (_| | |_
+ \\___/ \\___|_| |_|\\__,_|\\__|
+
+{config_line}{mode_label} · /help for commands"""
         msg = Static(logo, classes="greeting")
         await chat.mount(msg)
         chat.scroll_end(animate=False)
@@ -281,10 +299,13 @@ class OllamaChat(App):
         await chat.mount(msg)
         chat.scroll_end(animate=False)
 
-    async def _handle_command(self, cmd: str) -> bool:
+    async def _handle_command(self, raw_cmd: str) -> bool:
         """Handle slash commands. Returns True if command was handled."""
-        _log.debug(f"Command: {cmd}")
-        cmd = cmd.strip().lower()
+        _log.debug(f"Command: {raw_cmd}")
+        raw_cmd = raw_cmd.strip()
+        parts = raw_cmd.split(maxsplit=1)
+        cmd = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
 
         if cmd in ("/help", "/h", "/?"):
             help_text = """**Commands:**
@@ -329,29 +350,26 @@ class OllamaChat(App):
                 await self._show_system_message("No system prompt set.")
             return True
 
-        elif cmd.startswith("/sys ") or cmd.startswith("/system "):
-            # Inject a system message into the conversation
-            parts = cmd.split(maxsplit=1)
-            if len(parts) > 1:
-                sys_msg = parts[1].strip()
-                self.messages.append({"role": "system", "content": sys_msg})
-                await self._show_system_message(f"*[injected]* {sys_msg}")
+        elif cmd in ("/sys", "/system"):
+            if arg:
+                self.messages.append({"role": "system", "content": arg})
+                await self._show_system_message(f"*[injected]* {arg}")
             return True
 
         elif cmd in ("/model", "/m"):
             await self._show_system_message(f"Model: `{self.model}`")
             return True
 
-        elif cmd.startswith("/personality") or cmd.startswith("/p ") or cmd == "/p":
-            await self._handle_personality_command(cmd)
+        elif cmd in ("/personality", "/p"):
+            await self._handle_personality_command(arg)
             return True
 
         elif cmd == "/project":
             await self._handle_project_toggle()
             return True
 
-        elif cmd.startswith("/config") or cmd.startswith("/cfg"):
-            await self._handle_config_command(cmd)
+        elif cmd in ("/config", "/cfg"):
+            await self._handle_config_command(arg)
             return True
 
         elif cmd in ("/impersonate", "/imp"):
@@ -422,16 +440,15 @@ class OllamaChat(App):
         else:
             await self._show_system_message(f"Local prompt: **{status}** (no file found)")
 
-    async def _handle_config_command(self, cmd: str) -> None:
+    async def _handle_config_command(self, arg: str) -> None:
         """Handle /config command for listing and switching configs."""
-        parts = cmd.split(maxsplit=1)
         configs = list_configs()
 
         # Add current config.conf as option
         current_name = self.config_name or "(default)"
         all_configs = [current_name] + [c for c in configs if c != self.config_name]
 
-        if len(parts) == 1:
+        if not arg:
             # List configs
             lines = ["**Available configs:**"]
             for i, c in enumerate(all_configs, 1):
@@ -441,7 +458,7 @@ class OllamaChat(App):
             await self._show_system_message("\n".join(lines))
             return
 
-        choice = parts[1].strip()
+        choice = arg.strip()
         try:
             idx = int(choice)
             if idx == 1:
@@ -488,44 +505,38 @@ class OllamaChat(App):
             await self._show_system_message("Need conversation context first")
             return
 
-        self.is_generating = True
-        status = self.query_one("#status", Static)
-        input_widget = self.query_one("#chat-input", Input)
+        async with self._generating_lock():
+            input_widget = self.query_one("#chat-input", Input)
+            status = self.query_one("#status", Static)
 
-        # Build messages with impersonate instruction
-        impersonate_messages = self.messages.copy()
-        impersonate_messages.append({
-            "role": "system",
-            "content": self.sys_instructions["impersonate"],
-        })
+            # Build messages with impersonate instruction
+            impersonate_messages = self.messages.copy()
+            impersonate_messages.append({
+                "role": "system",
+                "content": self.sys_instructions["impersonate"],
+            })
 
-        status.update(self._status_text("impersonating..."))
-        input_widget.value = "Impersonating..."
-        input_widget.disabled = True
+            status.update(self._status_text("impersonating..."))
+            input_widget.value = "Impersonating..."
 
-        try:
-            result = await asyncio.to_thread(
-                lambda: self._chat_call(impersonate_messages, stream=False)
-            )
-            response, _ = self._extract_result(result)
-            response = response.strip()
-            # Remove quotes if the model wrapped the response
-            if response.startswith('"') and response.endswith('"'):
-                response = response[1:-1]
-            # Replace newlines with spaces (Input doesn't support multiline)
-            response = " ".join(response.split())
-            _log.debug(f"Impersonate result: {response[:100]}...")
-            input_widget.value = response
-            input_widget.cursor_position = len(response)
-        except Exception as e:
-            _log.exception("Impersonate error")
-            input_widget.value = ""
-            await self._show_system_message(f"Error: {e}")
-
-        input_widget.disabled = False
-        self.is_generating = False
-        status.update(self._status_text())
-        input_widget.focus()
+            try:
+                result = await asyncio.to_thread(
+                    lambda: self._chat_call(impersonate_messages, stream=False)
+                )
+                response, _ = self._extract_result(result)
+                response = response.strip()
+                # Remove quotes if the model wrapped the response
+                if response.startswith('"') and response.endswith('"'):
+                    response = response[1:-1]
+                # Replace newlines with spaces (Input doesn't support multiline)
+                response = " ".join(response.split())
+                _log.debug(f"Impersonate result: {response[:100]}...")
+                input_widget.value = response
+                input_widget.cursor_position = len(response)
+            except Exception as e:
+                _log.exception("Impersonate error")
+                input_widget.value = ""
+                await self._show_system_message(f"Error: {e}")
 
     async def _handle_stats(self) -> None:
         """Show generation statistics."""
@@ -557,101 +568,75 @@ class OllamaChat(App):
             await self._show_system_message("Not enough conversation to compact")
             return
 
-        self.is_generating = True
-        chat = self.query_one("#chat", ChatContainer)
-        status = self.query_one("#status", Static)
-        input_widget = self.query_one("#chat-input", Input)
-        input_widget.disabled = True
+        async with self._generating_lock():
+            chat = self.query_one("#chat", ChatContainer)
+            status = self.query_one("#status", Static)
 
-        # Show spinner message in chat
-        spinner_msg = Message("...", "system-info")
-        await chat.mount(spinner_msg)
-        chat.scroll_end(animate=False)
+            # Show spinner message in chat
+            spinner_msg = Message("...", "system-info")
+            await chat.mount(spinner_msg)
+            chat.scroll_end(animate=False)
 
-        start_time = time.time()
-        summary = ""
-        chunks = 0
+            start_time = time.time()
+            summary = ""
+            chunks = 0
 
-        try:
-            compact_messages = self.messages.copy()
-            compact_messages.append({
-                "role": "system",
-                "content": self.sys_instructions["compact"],
-            })
-
-            # Phase 1: waiting for first token
-            spinner = asyncio.create_task(
-                self._animate_spinner(spinner_msg, status, start_time, "waiting for first token")
-            )
             try:
-                stream = await asyncio.to_thread(
-                    lambda: self._chat_call(compact_messages, stream=True)
+                compact_messages = self.messages.copy()
+                compact_messages.append({
+                    "role": "system",
+                    "content": self.sys_instructions["compact"],
+                })
+
+                stream, first_chunk = await self._start_stream(
+                    compact_messages, spinner_msg, status, start_time
                 )
-                first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-            finally:
-                spinner.cancel()
-                try:
-                    await spinner
-                except asyncio.CancelledError:
-                    pass
 
-            # Phase 2: buffer response, show progress
-            if first_chunk:
-                content = self._extract_chunk(first_chunk)
-                if content:
-                    summary += content
-                    chunks += 1
-
-                frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-                for chunk in stream:
-                    content = self._extract_chunk(chunk)
+                # Phase 2: buffer response, show progress
+                if first_chunk:
+                    content = self._extract_chunk(first_chunk)
                     if content:
                         summary += content
                         chunks += 1
-                    elapsed = time.time() - start_time
-                    frame = frames[int(elapsed * 10) % len(frames)]
-                    await spinner_msg.update(f"{frame} compacting conversation... {elapsed:.1f}s ({chunks} chunks)")
-                    chat.scroll_end(animate=False)
-                    status.update(self._status_text(f"compacting... {elapsed:.1f}s ({chunks} chunks)"))
 
-            summary = summary.strip()
-            elapsed = time.time() - start_time
+                    for chunk in stream:
+                        content = self._extract_chunk(chunk)
+                        if content:
+                            summary += content
+                            chunks += 1
+                        elapsed = time.time() - start_time
+                        frame = self.SPINNER_FRAMES[int(elapsed * 10) % len(self.SPINNER_FRAMES)]
+                        await spinner_msg.update(f"{frame} compacting conversation... {elapsed:.1f}s ({chunks} chunks)")
+                        chat.scroll_end(animate=False)
+                        status.update(self._status_text(f"compacting... {elapsed:.1f}s ({chunks} chunks)"))
 
-            # Rebuild messages: system prompt + summary as context
-            self.messages = []
-            if self.system_prompt:
-                self.messages.append({"role": "system", "content": self.system_prompt})
-            prefix = self.sys_instructions["compact_prefix"]
-            self.messages.append({"role": "system", "content": f"{prefix}\n\n{summary}"})
+                summary = summary.strip()
+                elapsed = time.time() - start_time
 
-            # Reset counters
-            self.total_tokens = 0
-            self.last_gen_time = 0.0
-            self.last_tokens = 0
-            self.last_ttft = 0.0
-            self._context_warning_shown = False
+                # Rebuild messages: system prompt + summary as context
+                self.messages = []
+                if self.system_prompt:
+                    self.messages.append({"role": "system", "content": self.system_prompt})
+                prefix = self.sys_instructions["compact_prefix"]
+                self.messages.append({"role": "system", "content": f"{prefix}\n\n{summary}"})
 
-            # Refresh chat display
-            chat.remove_children()
-            await self._show_system_message(f"**Conversation compacted** *({elapsed:.1f}s)*\n\n{summary}")
-            _log.info(f"Compacted conversation: {len(conv_messages)} messages -> summary ({len(summary)} chars)")
+                self._reset_stats()
 
-        except Exception as e:
-            _log.exception("Compact error")
-            await spinner_msg.remove()
-            await self._show_system_message(f"Error compacting: {e}")
+                # Refresh chat display
+                chat.remove_children()
+                await self._show_system_message(f"**Conversation compacted** *({elapsed:.1f}s)*\n\n{summary}")
+                _log.info(f"Compacted conversation: {len(conv_messages)} messages -> summary ({len(summary)} chars)")
 
-        input_widget.disabled = False
-        self.is_generating = False
-        status.update(self._status_text())
-        input_widget.focus()
+            except Exception as e:
+                _log.exception("Compact error")
+                await spinner_msg.remove()
+                await self._show_system_message(f"Error compacting: {e}")
 
-    async def _handle_personality_command(self, cmd: str) -> None:
+    async def _handle_personality_command(self, arg: str) -> None:
         """Handle /personality command for listing and switching personalities."""
-        parts = cmd.split(maxsplit=1)
         personalities = list_personalities()
 
-        if len(parts) == 1:
+        if not arg:
             lines = ["**Available personalities:**"]
             for i, p in enumerate(personalities, 1):
                 marker = " ← current" if p == self.personality_name else ""
@@ -660,7 +645,7 @@ class OllamaChat(App):
             await self._show_system_message("\n".join(lines))
             return
 
-        choice = parts[1].strip()
+        choice = arg.strip()
         try:
             idx = int(choice)
             if 1 <= idx <= len(personalities):
@@ -761,22 +746,9 @@ class OllamaChat(App):
         cancelled = False
 
         try:
-            # Always stream under the hood, show "waiting for first token"
-            spinner = asyncio.create_task(
-                self._animate_spinner(assistant_msg, status, start_time, "waiting for first token")
+            stream, first_chunk = await self._start_stream(
+                self.messages, assistant_msg, status, start_time
             )
-            try:
-                stream = await asyncio.to_thread(
-                    lambda: self._chat_call(self.messages, stream=True)
-                )
-                first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
-            finally:
-                spinner.cancel()
-                try:
-                    await spinner
-                except asyncio.CancelledError:
-                    pass
-
             self.last_ttft = time.time() - start_time if not self._generation_cancelled else 0.0
 
             if first_chunk and not self._generation_cancelled:
@@ -805,7 +777,6 @@ class OllamaChat(App):
                         status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
                 else:
                     # Buffer response, show "thinking" with chunk count
-                    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
                     for chunk in stream:
                         if self._generation_cancelled:
                             cancelled = True
@@ -815,7 +786,7 @@ class OllamaChat(App):
                             response_text += content
                             tokens_generated += 1
                         elapsed = time.time() - start_time
-                        frame = frames[int(elapsed * 10) % len(frames)]
+                        frame = self.SPINNER_FRAMES[int(elapsed * 10) % len(self.SPINNER_FRAMES)]
                         await assistant_msg.update(f"● {frame} thinking... {elapsed:.1f}s ({tokens_generated} chunks)")
                         chat.scroll_end(animate=False)
                         status.update(self._status_text(f"thinking... {elapsed:.1f}s ({tokens_generated} chunks)"))
@@ -851,16 +822,36 @@ class OllamaChat(App):
                 f"⚠ Approximately {remaining:.0f}% context length remaining, consider compacting (`/compact`)"
             )
 
+    async def _start_stream(self, messages: list[dict], msg: Message, status: Static, start_time: float):
+        """Start a streaming API call with a spinner while waiting for the first token.
+
+        Returns (stream_iterator, first_chunk) — first_chunk may be None.
+        """
+        spinner = asyncio.create_task(
+            self._animate_spinner(msg, status, start_time, "waiting for first token")
+        )
+        try:
+            stream = await asyncio.to_thread(
+                lambda: self._chat_call(messages, stream=True)
+            )
+            first_chunk = await asyncio.to_thread(lambda: next(iter(stream), None))
+        finally:
+            spinner.cancel()
+            try:
+                await spinner
+            except asyncio.CancelledError:
+                pass
+        return stream, first_chunk
+
     async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:
         """Animate spinner indicator with given label."""
-        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         i = 0
         while True:
             elapsed = time.time() - start_time
-            await msg.update(f"● {frames[i]} {label}...")
+            await msg.update(f"● {self.SPINNER_FRAMES[i]} {label}...")
             self.query_one("#chat", ChatContainer).scroll_end(animate=False)
             status.update(self._status_text(f"{label}... {elapsed:.1f}s"))
-            i = (i + 1) % len(frames)
+            i = (i + 1) % len(self.SPINNER_FRAMES)
             await asyncio.sleep(0.1)
 
     def action_clear_input(self) -> None:
@@ -895,11 +886,7 @@ class OllamaChat(App):
         chat = self.query_one("#chat", ChatContainer)
         chat.remove_children()
         self.messages = []
-        self.total_tokens = 0
-        self.last_gen_time = 0.0
-        self.last_tokens = 0
-        self.last_ttft = 0.0
-        self._context_warning_shown = False
+        self._reset_stats()
         if self.system_prompt:
             self.messages.append({"role": "system", "content": self.system_prompt})
         self.query_one("#status", Static).update(self._status_text())

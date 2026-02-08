@@ -17,6 +17,19 @@ PERSONALITIES_DIR = CONFIG_DIR / "personalities"
 # Bundled personalities (shipped with the app)
 BUNDLED_PERSONALITIES_DIR = Path(__file__).parent / "personalities"
 
+# Default config values (single source of truth)
+DEFAULT_CONFIG = {
+    "host": "",  # filled by get_default_host() at runtime
+    "model": "llama3.2",
+    "num_ctx": 4096,
+    "personality": "default",
+    "append_local_prompt": True,
+    "streaming": True,
+    "verify_ssl": True,
+    "model_options": {},
+    "config_name": "",
+}
+
 
 def get_default_host() -> str:
     """Get default host from environment or fallback."""
@@ -64,17 +77,7 @@ def list_configs() -> list[str]:
 
 def load_config(config_file: Path | None = None) -> dict:
     """Load configuration from file."""
-    config = {
-        "host": get_default_host(),
-        "model": "llama3.2",
-        "num_ctx": 4096,
-        "personality": "default",
-        "append_local_prompt": True,
-        "streaming": True,
-        "verify_ssl": True,
-        "model_options": {},
-        "config_name": "",
-    }
+    config = {**DEFAULT_CONFIG, "host": get_default_host()}
 
     file_to_load = config_file or CONFIG_FILE
     if file_to_load.exists():
@@ -147,21 +150,27 @@ def save_config(
         parser.write(f)
 
 
+def save_config_dict(config: dict, config_file: Path | None = None, **overrides) -> None:
+    """Save config from a dict, with optional field overrides."""
+    merged = {**config, **overrides}
+    save_config(
+        host=merged["host"],
+        model=merged["model"],
+        num_ctx=merged["num_ctx"],
+        personality=merged.get("personality", "default"),
+        append_local_prompt=merged.get("append_local_prompt", True),
+        streaming=merged.get("streaming", True),
+        model_options=merged.get("model_options"),
+        config_name=merged.get("config_name", ""),
+        config_file=config_file,
+        verify_ssl=merged.get("verify_ssl", True),
+    )
+
+
 def update_config(**overrides) -> None:
     """Update specific fields in config, preserving other settings."""
     config = load_config()
-    config.update(overrides)
-    save_config(
-        host=config["host"],
-        model=config["model"],
-        num_ctx=config["num_ctx"],
-        personality=config["personality"],
-        append_local_prompt=config["append_local_prompt"],
-        streaming=config["streaming"],
-        model_options=config["model_options"],
-        config_name=config["config_name"],
-        verify_ssl=config["verify_ssl"],
-    )
+    save_config_dict(config, **overrides)
 
 
 def switch_config_to_default(new_config_name: str, interactive: bool = True) -> tuple[bool, str]:
@@ -195,13 +204,7 @@ def switch_config_to_default(new_config_name: str, interactive: bool = True) -> 
             # Named config: overwrite its backup silently (it's saving "back home")
             backup_file = CONFIG_DIR / f"{current_name}.conf"
 
-        save_config(
-            current_config["host"], current_config["model"], current_config["num_ctx"],
-            current_config["personality"], current_config["append_local_prompt"],
-            current_config["streaming"], current_config["model_options"],
-            config_name=current_name, config_file=backup_file,
-            verify_ssl=current_config["verify_ssl"],
-        )
+        save_config_dict(current_config, config_file=backup_file, config_name=current_name)
         print(f"Backed up current config to {backup_file.name}")
 
     shutil.copy(new_config_file, CONFIG_FILE)
@@ -255,21 +258,31 @@ def load_system_prompt(
     return personality_content, personality_name
 
 
+def _backup_config_interactive(config: dict, default_name: str = "") -> None:
+    """Prompt for backup name, check overwrite, and save. Used by run_setup."""
+    backup_name = default_name
+    if not backup_name:
+        backup_name = input("Name for current config backup [config-default]: ").strip()
+        if not backup_name:
+            backup_name = "config-default"
+
+    backup_file = CONFIG_DIR / f"{backup_name}.conf"
+
+    if backup_file.exists():
+        confirm = input(f"'{backup_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("Backup skipped")
+            return
+
+    save_config_dict(config, config_file=backup_file, config_name=backup_name)
+    print(f"Backed up to {backup_file.name}")
+
+
 def run_setup(create_new: bool = False) -> None:
     """Run interactive setup wizard."""
     if create_new:
         print("ollama-chat - Create new config profile\n")
-        config = {
-            "host": get_default_host(),
-            "model": "llama3.2",
-            "num_ctx": 4096,
-            "personality": "default",
-            "append_local_prompt": True,
-            "streaming": True,
-            "verify_ssl": True,
-            "model_options": {},
-            "config_name": "",
-        }
+        config = {**DEFAULT_CONFIG, "host": get_default_host()}
         config_existed = False
         old_config_name = ""
     else:
@@ -414,39 +427,12 @@ def run_setup(create_new: bool = False) -> None:
             # Backup current config.conf first
             if CONFIG_FILE.exists():
                 current_config = load_config()
-                current_name = current_config.get("config_name", "")
-
-                if not current_name:
-                    current_name = input("Name for current config backup [config-default]: ").strip()
-                    if not current_name:
-                        current_name = "config-default"
-
-                backup_file = CONFIG_DIR / f"{current_name}.conf"
-
-                # Only ask overwrite on first backup
-                do_backup = True
-                if backup_file.exists():
-                    confirm = input(f"'{current_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
-                    if confirm not in ("y", "yes"):
-                        do_backup = False
-                        print("Backup skipped")
-
-                if do_backup:
-                    save_config(
-                        current_config["host"], current_config["model"], current_config["num_ctx"],
-                        current_config["personality"], current_config["append_local_prompt"],
-                        current_config["streaming"], current_config["model_options"],
-                        config_name=current_name, config_file=backup_file,
-                        verify_ssl=current_config["verify_ssl"],
-                    )
-                    print(f"Backed up current config to {backup_file.name}")
+                _backup_config_interactive(current_config, current_config.get("config_name", ""))
 
             # Save new config as default (with config_name set)
-            save_config(
-                host, model, num_ctx, personality, append_local_prompt,
-                config["streaming"], config["model_options"],
-                config_name=new_name, verify_ssl=verify_ssl,
-            )
+            save_config_dict(config, host=host, model=model, num_ctx=num_ctx,
+                             personality=personality, append_local_prompt=append_local_prompt,
+                             config_name=new_name, verify_ssl=verify_ssl)
             print(f"\nConfig '{new_name}' saved as default")
         else:
             # Save as named config only
@@ -457,12 +443,10 @@ def run_setup(create_new: bool = False) -> None:
                     print("Cancelled")
                     return
 
-            save_config(
-                host, model, num_ctx, personality, append_local_prompt,
-                config["streaming"], config["model_options"],
-                config_name=new_name, config_file=new_file,
-                verify_ssl=verify_ssl,
-            )
+            save_config_dict(config, config_file=new_file, host=host, model=model,
+                             num_ctx=num_ctx, personality=personality,
+                             append_local_prompt=append_local_prompt,
+                             config_name=new_name, verify_ssl=verify_ssl)
             print(f"\nConfig saved to {new_file}")
             print(f"Use with: ochat --use-config {new_name}")
     else:
@@ -470,34 +454,12 @@ def run_setup(create_new: bool = False) -> None:
         if config_existed:
             backup_choice = input("\nBackup current config before saving? [y/N]: ").strip().lower()
             if backup_choice in ("y", "yes"):
-                backup_name = old_config_name
-                if not backup_name:
-                    backup_name = input("Name for backup [config-default]: ").strip()
-                    if not backup_name:
-                        backup_name = "config-default"
-
-                backup_file = CONFIG_DIR / f"{backup_name}.conf"
-
-                # Check for overwrite
-                do_backup = True
-                if backup_file.exists():
-                    confirm = input(f"'{backup_name}.conf' exists. Overwrite? [y/N]: ").strip().lower()
-                    if confirm not in ("y", "yes"):
-                        do_backup = False
-                        print("Backup skipped")
-
-                if do_backup:
-                    save_config(
-                        config["host"], config["model"], config["num_ctx"],
-                        config["personality"], config["append_local_prompt"],
-                        config["streaming"], config["model_options"],
-                        config_name=backup_name, config_file=backup_file,
-                        verify_ssl=config["verify_ssl"],
-                    )
-                    print(f"Backed up to {backup_file.name}")
+                _backup_config_interactive(config, old_config_name)
 
         # 8. Save to config.conf (without config_name for default config)
-        save_config(host, model, num_ctx, personality, append_local_prompt, config["streaming"], config["model_options"], verify_ssl=verify_ssl)
+        save_config_dict(config, host=host, model=model, num_ctx=num_ctx,
+                         personality=personality, append_local_prompt=append_local_prompt,
+                         verify_ssl=verify_ssl)
         print(f"\nConfiguration saved to {CONFIG_FILE}")
 
     print(f"Personalities in {PERSONALITIES_DIR}/")
