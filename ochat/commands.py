@@ -28,7 +28,7 @@ class CommandsMixin:
 
     async def _handle_command(self, raw_cmd: str) -> bool:
         """Handle slash commands. Returns True if command was handled."""
-        _log.debug(f"Command: {raw_cmd}")
+        _log.debug("Command: %s", raw_cmd)
         raw_cmd = raw_cmd.strip()
         parts = raw_cmd.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -260,7 +260,7 @@ class CommandsMixin:
                     response = response[1:-1]
                 # Replace newlines with spaces (Input doesn't support multiline)
                 response = " ".join(response.split())
-                _log.debug(f"Impersonate result: {response[:100]}...")
+                _log.debug("Impersonate result: %s...", response[:100])
                 input_widget.value = response
                 input_widget.cursor_position = len(response)
             except Exception as e:
@@ -275,7 +275,7 @@ class CommandsMixin:
 
         if self.last_gen_time > 0:
             tps = self.last_tokens / self.last_gen_time if self.last_gen_time else 0
-            lines.append(f"\n**Last generation:**")
+            lines.append("\n**Last generation:**")
             lines.append(f"- Duration: {self.last_gen_time:.2f}s")
             if self.last_ttft > 0:
                 lines.append(f"- TTFT: {self.last_ttft:.2f}s")
@@ -358,7 +358,7 @@ class CommandsMixin:
                 # Refresh chat display
                 chat.remove_children()
                 await self._show_system_message(f"**Conversation compacted** *({elapsed:.1f}s)*\n\n{summary}")
-                _log.info(f"Compacted conversation: {len(conv_messages)} messages -> summary ({len(summary)} chars)")
+                _log.info("Compacted conversation: %d messages -> summary (%d chars)", len(conv_messages), len(summary))
 
             except Exception as e:
                 _log.exception("Compact error")

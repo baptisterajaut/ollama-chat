@@ -5,7 +5,6 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import logging
-import os
 import sys
 import tempfile
 import time
@@ -29,6 +28,7 @@ from ochat.config import (
     load_config,
     load_system_prompt,
     run_setup,
+    switch_config_to_default,
     update_config,
 )
 from ochat.generation import GenerationMixin
@@ -125,7 +125,7 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         """Load system_instructions.json. Fatal error if missing or invalid."""
         path = Path(__file__).parent.parent / "system_instructions.json"
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
             print(f"Error: {path} not found. Please restore the file.")
@@ -207,11 +207,11 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         return base
 
     async def on_mount(self) -> None:
-        _log.info(f"App mounted, model={self.model}, config={self.config_name}")
+        _log.info("App mounted, model=%s, config=%s", self.model, self.config_name)
         self.query_one("#chat-input", Input).focus()
         await self._show_greeting()
 
-    def on_click(self, event: Click) -> None:
+    def on_click(self, _event: Click) -> None:
         """Keep focus on input when clicking anywhere."""
         self.query_one("#chat-input", Input).focus()
 
@@ -223,19 +223,19 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         # Try Ollama first, then OpenAI fallback
         mode_label = ""
         try:
-            await asyncio.to_thread(lambda: self.ollama_client.list())
+            await asyncio.to_thread(self.ollama_client.list)
             self.api_mode = "ollama"
             _log.info("Connected in Ollama mode")
             mode_label = "Connected"
         except Exception as e:
-            _log.info(f"Ollama list failed ({e}), trying OpenAI fallback")
+            _log.info("Ollama list failed (%s), trying OpenAI fallback", e)
             try:
-                await asyncio.to_thread(lambda: self.openai_client.models.list())
+                await asyncio.to_thread(self.openai_client.models.list)
                 self.api_mode = "openai"
                 _log.info("Connected in OpenAI-compatible mode")
                 mode_label = "Connected (OpenAI mode)"
             except Exception as e2:
-                _log.warning(f"OpenAI fallback failed: {e2}")
+                _log.warning("OpenAI fallback failed: %s", e2)
                 await self._show_system_message("Warning: Cannot connect to server")
                 return
 
@@ -379,7 +379,7 @@ def main():
         logger = logging.getLogger("ochat")
         logger.setLevel(logging.DEBUG)
         logger.addHandler(handler)
-        _log.info(f"Debug logging enabled, log file: {log_file}")
+        _log.info("Debug logging enabled, log file: %s", log_file)
         _cleanup_old_logs()
 
     if args.new:

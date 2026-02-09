@@ -50,4 +50,3 @@ class Message(Markdown):
 
 class ChatContainer(ScrollableContainer):
     """Scrollable container for chat messages."""
-    pass

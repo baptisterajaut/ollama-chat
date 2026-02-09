@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from textual.widgets import Input, Static
+from textual.widgets import Static
 
 from ochat.widgets import ChatContainer, Message
 

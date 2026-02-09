@@ -152,7 +152,7 @@ def save_config(
     parser["model_options"] = {k: str(v) for k, v in model_options.items()}
 
     file_to_save = config_file or CONFIG_FILE
-    with open(file_to_save, "w") as f:
+    with open(file_to_save, "w", encoding="utf-8") as f:
         parser.write(f)
 
 
@@ -224,7 +224,7 @@ def load_project_prompt() -> str | None:
     for name in ["agent.md", "system.md", "system.txt", "AGENT.md"]:
         p = Path(name)
         if p.exists():
-            return p.read_text().strip()
+            return p.read_text(encoding="utf-8").strip()
     return None
 
 
@@ -246,7 +246,7 @@ def load_system_prompt(
     if path:
         p = Path(path)
         if p.exists():
-            return p.read_text().strip(), None
+            return p.read_text(encoding="utf-8").strip(), None
 
     ensure_personalities_dir()
     personality_name = personality or "default"
@@ -400,10 +400,10 @@ def run_setup(create_new: bool = False) -> None:
     edit_prompt = input(f"\nEdit personality '{personality}'? [y/N]: ").strip().lower()
     if edit_prompt in ("y", "yes"):
         editor = os.environ.get("EDITOR", "nano")
-        subprocess.run([editor, str(PERSONALITIES_DIR / f"{personality}.md")])
+        subprocess.run([editor, str(PERSONALITIES_DIR / f"{personality}.md")], check=False)
 
     # 6. Append local prompt?
-    print(f"\nAppend local prompt (agent.md, system.md from current directory)?")
+    print("\nAppend local prompt (agent.md, system.md from current directory)?")
     print("  If yes: system prompt + local file merged")
     print("  If no: system prompt only")
     project_choice = input(f"Append local prompt? [{'Y/n' if config['append_local_prompt'] else 'y/N'}]: ").strip().lower()
