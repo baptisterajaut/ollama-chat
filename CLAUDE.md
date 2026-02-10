@@ -16,7 +16,7 @@ ollama-chat/
 │   ├── widgets.py              # Message, ChatContainer, CommandSuggester
 │   ├── config.py               # Configuration management, personalities
 │   └── chat.tcss               # Textual CSS styles
-├── system_instructions.json    # LLM instructions for commands (compact, impersonate)
+├── system_instructions.json    # LLM instructions for commands (compact, impersonate, impersonate_short)
 ├── personalities/              # Bundled personality templates (copied on first run)
 │   ├── default.md
 │   ├── creative.md
@@ -28,7 +28,7 @@ ollama-chat/
 ## Configuration
 
 Config stored in `~/.config/ollama-chat/`:
-- `config.conf` - INI format settings (host, verify_ssl, model, num_ctx, personality, streaming, append_local_prompt, config_name)
+- `config.conf` - INI format settings (host, verify_ssl, model, num_ctx, personality, streaming, append_local_prompt, auto_suggest, config_name)
 - `*.conf` - Named config profiles (backups created via setup wizard or `--as-default`)
 - `personalities/` - System prompt templates (`.md` files)
 
@@ -99,14 +99,16 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 - `/p <n>` - Switch to personality by number/name
 - `/config` - List config profiles
 - `/config <n>` - Switch to config by number/name (restarts app)
-- `/impersonate`, `/imp` - Generate user response suggestion (for RP)
+- `/impersonate`, `/imp` - Generate user response suggestion (long-form)
+- `/imps` - Short impersonate (suggestion-length, under 15 words)
+- `/suggest` - Toggle auto-suggest after responses
 - `/project` - Toggle local prompt append
 - `/stats`, `/st` - Show generation statistics (TTFT, t/s, tokens)
 - `/compact` - Summarize conversation to free context
 
 ## System instructions
 
-LLM instructions for commands (compact, impersonate) are stored in `system_instructions.json` at the project root. Users can edit this file to customize the instructions. The app exits with an error if the file is missing or invalid JSON.
+LLM instructions for commands (compact, impersonate, impersonate_short) are stored in `system_instructions.json` at the project root. Users can edit this file to customize the instructions. The app exits with an error if the file is missing or invalid JSON.
 
 ## Personalities
 
@@ -116,13 +118,26 @@ System prompt templates in `~/.config/ollama-chat/personalities/`. Bundled perso
 - ON: system prompt + local `agent.md`/`system.md` appended
 - OFF: system prompt only, local files ignored
 
-## Impersonate (RP feature)
+## Impersonate & auto-suggest
 
 `/impersonate` or `/imp` generates a suggested user response using the LLM:
-- Useful for roleplay with gamemaster personality
-- LLM generates what the user/player might say next
+- Useful for roleplay, brainstorming, or getting the LLM's perspective on what to ask next
+- LLM generates what the user might say next (long-form)
 - Result is placed in input field (not sent automatically)
 - User can edit or send directly
+
+`/imps` is the short variant (under 15 words), same workflow.
+
+**Auto-suggest** (`auto_suggest` config option, default ON):
+- After each LLM response, a short suggestion is generated in the background
+- Appears as placeholder text in the input field
+- **Tab** accepts the suggestion into the input
+- Typing anything else replaces it naturally
+- If `append_local_prompt` is ON and a project file exists, auto-suggest also fires on startup (suggesting a first message based on project context)
+- Toggle with `/suggest` command
+- Uses `impersonate_short` instruction from `system_instructions.json`
+
+**Implementation note**: Auto-suggest uses the input placeholder (not Textual's `_suggestion` reactive) because Textual's `Suggester` mechanism skips empty inputs entirely (`_watch_value` clears `_suggestion` when value is falsy). The placeholder approach is the only way to show ghost text in an empty Textual Input.
 
 ## Tech stack
 

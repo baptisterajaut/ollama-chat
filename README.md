@@ -29,7 +29,8 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 - Project-specific prompts (auto-loads `agent.md`/`system.md` from current directory)
 - Slash commands (`/help`, `/retry`, `/personality`, `/config`, `/impersonate`, etc.)
 - Keyboard shortcuts (Ctrl+O toggle streaming, Escape to cancel, etc.)
-- Impersonate mode for roleplay (LLM suggests user responses)
+- Auto-suggest: after each response, a short suggestion appears in the input (Tab to accept)
+- Impersonate mode: LLM suggests what you'd say next (`/imp` long-form, `/imps` short)
 - Context tracking with usage warnings and `/compact` to summarize conversation
 - Generation stats (TTFT, tokens/s) in status bar and `/stats`
 - Persistent configuration
@@ -92,7 +93,7 @@ ochat --help             # Show options
 | `Ctrl+L` | Clear chat |
 | `Ctrl+O` | Toggle streaming |
 | `Escape` | Cancel generation / Quit |
-| `Tab` | Autocomplete command |
+| `Tab` | Accept suggestion / autocomplete command |
 
 ### Slash commands
 
@@ -104,7 +105,9 @@ ochat --help             # Show options
 | `/clear` | Clear chat history |
 | `/personality` | List/switch personalities |
 | `/config` | List/switch config profiles (restarts app) |
-| `/impersonate` | Generate suggested user response (for RP) |
+| `/impersonate` | Generate suggested user response (long-form) |
+| `/imps` | Short impersonate (under 15 words) |
+| `/suggest` | Toggle auto-suggest after responses |
 | `/project` | Toggle project prompt merge |
 | `/prompt` | Show current system prompt |
 | `/sys <msg>` | Inject a system message (alias: `/system`) |

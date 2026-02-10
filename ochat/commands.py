@@ -45,7 +45,9 @@ class CommandsMixin:
 - `/model` or `/m` - Show current model
 - `/personality` or `/p` - List/change personality
 - `/config` - List/switch config profiles
-- `/impersonate` or `/imp` - Generate user response (for RP)
+- `/impersonate` or `/imp` - Generate user response suggestion
+- `/imps` - Short impersonate (suggestion-length)
+- `/suggest` - Toggle auto-suggest after responses
 - `/project` - Toggle local prompt append (agent.md)
 - `/stats` or `/st` - Show generation statistics
 - `/compact` - Summarize conversation to free context
@@ -103,6 +105,14 @@ class CommandsMixin:
 
         elif cmd in ("/impersonate", "/imp"):
             await self._handle_impersonate()
+            return True
+
+        elif cmd == "/imps":
+            await self._handle_impersonate_short()
+            return True
+
+        elif cmd == "/suggest":
+            await self._handle_suggest_toggle()
             return True
 
         elif cmd in ("/stats", "/st"):
@@ -364,6 +374,53 @@ class CommandsMixin:
                 _log.exception("Compact error")
                 await spinner_msg.remove()
                 await self._show_system_message(f"Error compacting: {e}")
+
+    async def _handle_impersonate_short(self) -> None:
+        """Generate a short user response suggestion, put it in input."""
+        _log.debug("Impersonate short started")
+        if self.is_generating:
+            return
+
+        if len([m for m in self.messages if m["role"] != "system"]) == 0:
+            await self._show_system_message("Need conversation context first")
+            return
+
+        async with self._generating_lock():
+            input_widget = self.query_one("#chat-input", Input)
+            status = self.query_one("#status", Static)
+
+            impersonate_messages = self.messages.copy()
+            impersonate_messages.append({
+                "role": "system",
+                "content": self.sys_instructions["impersonate_short"],
+            })
+
+            status.update(self._status_text("impersonating (short)..."))
+            input_widget.value = "Impersonating..."
+
+            try:
+                result = await asyncio.to_thread(
+                    lambda: self._chat_call(impersonate_messages, stream=False)
+                )
+                response, _ = self._extract_result(result)
+                response = response.strip()
+                if response.startswith('"') and response.endswith('"'):
+                    response = response[1:-1]
+                response = " ".join(response.split())
+                _log.debug("Impersonate short result: %s", response[:100])
+                input_widget.value = response
+                input_widget.cursor_position = len(response)
+            except Exception as e:
+                _log.exception("Impersonate short error")
+                input_widget.value = ""
+                await self._show_system_message(f"Error: {e}")
+
+    async def _handle_suggest_toggle(self) -> None:
+        """Toggle auto_suggest setting."""
+        self.auto_suggest = not self.auto_suggest
+        update_config(auto_suggest=self.auto_suggest)
+        status = "ON" if self.auto_suggest else "OFF"
+        await self._show_system_message(f"Auto-suggest: **{status}**")
 
     async def _handle_personality_command(self, arg: str) -> None:
         """Handle /personality command for listing and switching personalities."""

@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "append_local_prompt": True,
     "streaming": True,
     "verify_ssl": True,
+    "auto_suggest": True,
     "model_options": {},
     "config_name": "",
 }
@@ -91,6 +92,7 @@ def load_config(config_file: Path | None = None) -> dict:
         config["personality"] = parser.get("defaults", "personality", fallback=config["personality"])
         config["append_local_prompt"] = parser.getboolean("defaults", "append_local_prompt", fallback=config["append_local_prompt"])
         config["streaming"] = parser.getboolean("defaults", "streaming", fallback=config["streaming"])
+        config["auto_suggest"] = parser.getboolean("defaults", "auto_suggest", fallback=config["auto_suggest"])
         config["config_name"] = parser.get("defaults", "config_name", fallback=config["config_name"])
 
         # Load model options (empty string = not set, any key allowed)
@@ -126,6 +128,7 @@ def save_config(
     config_name: str = "",
     config_file: Path | None = None,
     verify_ssl: bool = True,
+    auto_suggest: bool = True,
 ) -> None:
     """Save configuration to file."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -141,6 +144,7 @@ def save_config(
         "personality": personality,
         "append_local_prompt": str(append_local_prompt).lower(),
         "streaming": str(streaming).lower(),
+        "auto_suggest": str(auto_suggest).lower(),
     }
     if config_name:
         defaults["config_name"] = config_name
@@ -170,6 +174,7 @@ def save_config_dict(config: dict, config_file: Path | None = None, **overrides)
         config_name=merged.get("config_name", ""),
         config_file=config_file,
         verify_ssl=merged.get("verify_ssl", True),
+        auto_suggest=merged.get("auto_suggest", True),
     )
 
 

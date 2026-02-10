@@ -26,6 +26,7 @@ from ochat.config import (
     CONFIG_FILE,
     list_configs,
     load_config,
+    load_project_prompt,
     load_system_prompt,
     run_setup,
     switch_config_to_default,
@@ -54,6 +55,7 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
 
     CSS_PATH = "chat.tcss"
     SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    DEFAULT_PLACEHOLDER = "Message... (/help for commands)"
 
     BINDINGS = [
         Binding("ctrl+c", "clear_input", "Clear input", show=False),
@@ -77,6 +79,7 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         config_name: str = "",
         host: str | None = None,
         verify_ssl: bool = True,
+        auto_suggest: bool = True,
     ) -> None:
         super().__init__()
         self.model = model
@@ -94,6 +97,9 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         self.messages: list[dict] = []
         self.is_generating = False
         self.streaming = streaming
+        self.auto_suggest = auto_suggest
+        self._auto_suggest_task: asyncio.Task | None = None
+        self._pending_suggestion: str = ""
         self._generation_cancelled = False
         self.total_tokens = 0
         self.last_gen_time = 0.0
@@ -138,7 +144,7 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         yield ChatContainer(id="chat")
         yield Vertical(
             Input(
-                placeholder="Message... (/help for commands)",
+                placeholder=self.DEFAULT_PLACEHOLDER,
                 id="chat-input",
                 suggester=CommandSuggester(use_cache=False),
             ),
@@ -251,6 +257,10 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         await chat.mount(msg)
         chat.scroll_end(animate=False)
 
+        # Auto-suggest first message if project context is available
+        if self.auto_suggest and self.append_local_prompt and load_project_prompt():
+            self._auto_suggest_task = asyncio.create_task(self._run_auto_suggest())
+
     async def _show_system_message(self, text: str) -> None:
         """Show a system info message in the chat."""
         chat = self.query_one("#chat", ChatContainer)
@@ -258,9 +268,23 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
         await chat.mount(msg)
         chat.scroll_end(animate=False)
 
+    def _clear_suggestion(self, input_widget: Input | None = None) -> None:
+        """Clear pending auto-suggestion and restore placeholder."""
+        if self._pending_suggestion:
+            self._pending_suggestion = ""
+            if input_widget is None:
+                input_widget = self.query_one("#chat-input", Input)
+            input_widget.placeholder = self.DEFAULT_PLACEHOLDER
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if not event.value.strip() or self.is_generating:
             return
+
+        # Cancel any pending auto-suggest
+        if self._auto_suggest_task and not self._auto_suggest_task.done():
+            self._auto_suggest_task.cancel()
+            self._auto_suggest_task = None
+        self._clear_suggestion(event.input)
 
         user_input = event.value.strip()
         event.input.value = ""
@@ -287,6 +311,12 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
     def action_focus_input(self) -> None:
         """Keep focus on input and accept suggestion if any."""
         input_widget = self.query_one("#chat-input", Input)
+        # Accept pending auto-suggestion on Tab when input is empty
+        if not input_widget.value and self._pending_suggestion:
+            input_widget.value = self._pending_suggestion
+            input_widget.cursor_position = len(self._pending_suggestion)
+            self._clear_suggestion(input_widget)
+            return
         if input_widget.cursor_at_end:
             input_widget.action_cursor_right()
         input_widget.focus()
@@ -308,6 +338,10 @@ class OllamaChat(CommandsMixin, GenerationMixin, App):
 
     def action_clear(self) -> None:
         """Clear chat history."""
+        if self._auto_suggest_task and not self._auto_suggest_task.done():
+            self._auto_suggest_task.cancel()
+            self._auto_suggest_task = None
+        self._clear_suggestion()
         chat = self.query_one("#chat", ChatContainer)
         chat.remove_children()
         self.messages = []
@@ -435,6 +469,7 @@ def main():
         config_name=config["config_name"],
         host=host,
         verify_ssl=config["verify_ssl"],
+        auto_suggest=config["auto_suggest"],
     )
     try:
         app.run()

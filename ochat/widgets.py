@@ -21,6 +21,8 @@ class CommandSuggester(Suggester):
         "/project",
         "/config",
         "/impersonate", "/imp",
+        "/imps",
+        "/suggest",
         "/stats", "/st",
         "/compact",
     ]

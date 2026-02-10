@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 
-from textual.widgets import Static
+from textual.widgets import Input, Static
 
 from ochat.widgets import ChatContainer, Message
 
@@ -133,6 +133,12 @@ class GenerationMixin:
             self.is_generating = False
             status.update(self._status_text())
 
+        # Auto-suggest after successful generation
+        if not cancelled and self.auto_suggest:
+            if self._auto_suggest_task and not self._auto_suggest_task.done():
+                self._auto_suggest_task.cancel()
+            self._auto_suggest_task = asyncio.create_task(self._run_auto_suggest())
+
         # One-shot context warning
         if not self._context_warning_shown and self._context_pct() > 80:
             self._context_warning_shown = True
@@ -165,6 +171,31 @@ class GenerationMixin:
     async def _anext(self, iterator):
         """Get next item from sync iterator without blocking event loop."""
         return await asyncio.to_thread(lambda: next(iterator, _STREAM_DONE))
+
+    async def _run_auto_suggest(self) -> None:
+        """Generate a short suggestion for the user's next message (background)."""
+        try:
+            suggest_messages = self.messages.copy()
+            suggest_messages.append({
+                "role": "system",
+                "content": self.sys_instructions["impersonate_short"],
+            })
+            result = await asyncio.to_thread(
+                lambda: self._chat_call(suggest_messages, stream=False)
+            )
+            response, _ = self._extract_result(result)
+            response = response.strip()
+            if response.startswith('"') and response.endswith('"'):
+                response = response[1:-1]
+            response = " ".join(response.split())
+
+            input_widget = self.query_one("#chat-input", Input)
+            if not input_widget.value and not self.is_generating:
+                self._pending_suggestion = response
+                input_widget.placeholder = response
+                _log.debug("Auto-suggest set: %s", response[:80])
+        except Exception:  # CancelledError is BaseException in 3.9+, propagates through
+            _log.debug("Auto-suggest failed", exc_info=True)
 
     async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:
         """Animate spinner indicator with given label."""

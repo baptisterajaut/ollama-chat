@@ -1,5 +1,6 @@
 {
     "compact": "Summarize the conversation above between you (the assistant) and the user. Keep the essential context, decisions made, and any important details needed to continue naturally. Remove redundant exchanges. Be concise.",
     "compact_prefix": "Summary of our previous discussion:",
-    "impersonate": "Now write what the USER would say next in response to the assistant's last message. Output ONLY the user's reply - no quotes, no narration, no 'User:' prefix. Continue naturally from the conversation."
+    "impersonate": "Now write what the USER would say next in response to the assistant's last message. Output ONLY the user's reply - no quotes, no narration, no 'User:' prefix. Continue naturally from the conversation.",
+    "impersonate_short": "Suggest what the user might say next in 1 short sentence (under 15 words). Output ONLY the raw text - no quotes, no prefixes, no narration."
 }
