@@ -2,24 +2,23 @@
 
 *Made with Claude to talk with non-Claude.*
 
-A simple Ollama chat TUI.
+A setup-and-forget Ollama chat TUI. One screen, no sub-menus, plenty of creature comforts.
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-public%20domain-brightgreen)
 ![Vibe](https://img.shields.io/badge/vibe-coded-ff69b4)
 
 ![ochat screenshot](.github/ochat.jpg)
-*It's so simple yet I had to do it myself.*
 
 ## Why?
 
-I wanted something like [Open WebUI](https://github.com/open-webui/open-webui) but in terminal. A basic chat interface without needing a full browser eating 8GB of RAM just to exist.
+I wanted something like [Open WebUI](https://github.com/open-webui/open-webui) but in terminal. A chat interface without needing a full browser eating 8GB of RAM just to exist.
 
-Features I needed: model-level settings, customizable system prompts/personalities, and a clean interface. Couldn't find anything that did this simply, especially the personalities part.
+It started as a bare-bones wrapper, but grew into something I actually enjoy using daily — switchable personalities, auto-suggest, impersonate mode, context tracking, multiple config profiles. Still not Open WebUI, but not bare-bones either.
 
 I also wanted a TUI as pleasant to use as [Claude Code](https://claude.com/claude-code) but for local Ollama models.
 
-This project was entirely vibe-coded with Claude. It does exactly what I need, nothing more.
+This project was entirely vibe-coded with Claude. It does exactly what I need.
 
 ## Features
 
@@ -41,13 +40,11 @@ This project was entirely vibe-coded with Claude. It does exactly what I need, n
 
 - It's just a client. No plan to have it start Ollama by itself or llama-cpp-python or anything
 - Made for Ollama only, OpenAI fallback is there "just in case" and is not tested
-- No conversation memory/persistence
+- No conversation persistence yet (could use `agent.md` generation as lightweight conversation memory in the future)
 - No multi-model conversations
 - No model templates (chat templates are handled by Ollama/your server)
 - No multiline input (TextArea doesn't support suggesters, and I prefer a single-line input with autocomplete over multiline without it — or making Claude reinvent the wheel and turning this codebase from "only Claude and God understand it" to "only God understands it")
 - No RAG, no agents, no tools
-
-It's somewhat basic. It has a bit more features than what I really needed, but it's no Claude Code
 
 ## Installation
 
@@ -198,6 +195,10 @@ ochat -d
 Log files are written to temp (auto-cleaned after 7 days):
 - **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
 - **Windows**: `%TEMP%\ollama-chat-YYYYMMDD-HHMMSS.log`
+
+## Alternatives
+
+If you want a more full-featured Ollama TUI, check out [parllama](https://github.com/paulrobello/parllama) and [oterm](https://github.com/ggozad/oterm). Both are capable and well-maintained. Their busier interfaces weren't to my taste — this project exists because I wanted a clean, single-screen interface with no panels or sidebars to manage.
 
 ## License
 
