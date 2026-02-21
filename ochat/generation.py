@@ -14,6 +14,14 @@ _log = logging.getLogger(__name__)
 _STREAM_DONE = object()
 
 
+def _clean_impersonate_response(response: str) -> str:
+    """Strip quotes and collapse whitespace from impersonate results."""
+    response = response.strip()
+    if response.startswith('"') and response.endswith('"'):
+        response = response[1:-1]
+    return " ".join(response.split())
+
+
 class GenerationMixin:
     """Mixin providing LLM generation capabilities for OllamaChat."""
 
@@ -73,46 +81,18 @@ class GenerationMixin:
                     response_text += content
                     tokens_generated += 1
 
-                if self.streaming:
-                    # Show text live as it streams
-                    await assistant_msg.update(f"● {response_text}")
+                response_text, tokens_generated, cancelled = await self._consume_chunks(
+                    stream, assistant_msg, chat, status, start_time,
+                    response_text, tokens_generated,
+                )
+
+                # Non-streaming: show buffered response after completion
+                if not self.streaming and not cancelled:
+                    think_time = time.time() - start_time
+                    await assistant_msg.update(
+                        f"● *thought for {think_time:.1f}s*\n\n{response_text}"
+                    )
                     chat.scroll_end(animate=False)
-
-                    while True:
-                        chunk = await self._anext(stream)
-                        if chunk is _STREAM_DONE or self._generation_cancelled:
-                            cancelled = self._generation_cancelled
-                            break
-                        content = self._extract_chunk(chunk)
-                        if content:
-                            response_text += content
-                            tokens_generated += 1
-                            await assistant_msg.update(f"● {response_text}")
-                            chat.scroll_end(animate=False)
-                        elapsed = time.time() - start_time
-                        tps = tokens_generated / elapsed if elapsed > 0 else 0
-                        status.update(self._status_text(f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"))
-                else:
-                    # Buffer response, show "thinking" with chunk count
-                    while True:
-                        chunk = await self._anext(stream)
-                        if chunk is _STREAM_DONE or self._generation_cancelled:
-                            cancelled = self._generation_cancelled
-                            break
-                        content = self._extract_chunk(chunk)
-                        if content:
-                            response_text += content
-                            tokens_generated += 1
-                        elapsed = time.time() - start_time
-                        frame = self.SPINNER_FRAMES[int(elapsed * 10) % len(self.SPINNER_FRAMES)]
-                        await assistant_msg.update(f"● {frame} thinking... {elapsed:.1f}s ({tokens_generated} chunks)")
-                        chat.scroll_end(animate=False)
-                        status.update(self._status_text(f"thinking... {elapsed:.1f}s ({tokens_generated} chunks)"))
-
-                    if not cancelled:
-                        think_time = time.time() - start_time
-                        await assistant_msg.update(f"● *thought for {think_time:.1f}s*\n\n{response_text}")
-                        chat.scroll_end(animate=False)
 
             if cancelled:
                 await assistant_msg.update("● *[cancelled]*")
@@ -146,6 +126,39 @@ class GenerationMixin:
             await self._show_system_message(
                 f"⚠ Approximately {remaining:.0f}% context length remaining, consider compacting (`/compact`)"
             )
+
+    async def _consume_chunks(self, stream, assistant_msg, chat, status,
+                              start_time, response_text, tokens_generated):
+        """Consume stream chunks, updating UI. Returns (text, tokens, cancelled)."""
+        while True:
+            chunk = await self._anext(stream)
+            if chunk is _STREAM_DONE or self._generation_cancelled:
+                return response_text, tokens_generated, self._generation_cancelled
+
+            content = self._extract_chunk(chunk)
+            if content:
+                response_text += content
+                tokens_generated += 1
+
+            elapsed = time.time() - start_time
+
+            if self.streaming:
+                if content:
+                    await assistant_msg.update(f"● {response_text}")
+                    chat.scroll_end(animate=False)
+                tps = tokens_generated / elapsed if elapsed > 0 else 0
+                status.update(self._status_text(
+                    f"generating... {elapsed:.1f}s ({tokens_generated}tok, {tps:.1f}t/s)"
+                ))
+            else:
+                frame = self.SPINNER_FRAMES[int(elapsed * 10) % len(self.SPINNER_FRAMES)]
+                await assistant_msg.update(
+                    f"● {frame} thinking... {elapsed:.1f}s ({tokens_generated} chunks)"
+                )
+                chat.scroll_end(animate=False)
+                status.update(self._status_text(
+                    f"thinking... {elapsed:.1f}s ({tokens_generated} chunks)"
+                ))
 
     async def _start_stream(self, messages: list[dict], msg: Message, status: Static, start_time: float):
         """Start a streaming API call with a spinner while waiting for the first token.
@@ -184,10 +197,7 @@ class GenerationMixin:
                 lambda: self._chat_call(suggest_messages, stream=False)
             )
             response, _ = self._extract_result(result)
-            response = response.strip()
-            if response.startswith('"') and response.endswith('"'):
-                response = response[1:-1]
-            response = " ".join(response.split())
+            response = _clean_impersonate_response(response)
 
             input_widget = self.query_one("#chat-input", Input)
             if not input_widget.value and not self.is_generating:

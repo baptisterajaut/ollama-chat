@@ -17,7 +17,7 @@ from ochat.config import (
     switch_config_to_default,
     update_config,
 )
-from ochat.generation import _STREAM_DONE
+from ochat.generation import _STREAM_DONE, _clean_impersonate_response
 from ochat.widgets import ChatContainer, Message
 
 _log = logging.getLogger(__name__)
@@ -264,12 +264,7 @@ class CommandsMixin:
                     lambda: self._chat_call(impersonate_messages, stream=False)
                 )
                 response, _ = self._extract_result(result)
-                response = response.strip()
-                # Remove quotes if the model wrapped the response
-                if response.startswith('"') and response.endswith('"'):
-                    response = response[1:-1]
-                # Replace newlines with spaces (Input doesn't support multiline)
-                response = " ".join(response.split())
+                response = _clean_impersonate_response(response)
                 _log.debug("Impersonate result: %s...", response[:100])
                 input_widget.value = response
                 input_widget.cursor_position = len(response)
@@ -403,10 +398,7 @@ class CommandsMixin:
                     lambda: self._chat_call(impersonate_messages, stream=False)
                 )
                 response, _ = self._extract_result(result)
-                response = response.strip()
-                if response.startswith('"') and response.endswith('"'):
-                    response = response[1:-1]
-                response = " ".join(response.split())
+                response = _clean_impersonate_response(response)
                 _log.debug("Impersonate short result: %s", response[:100])
                 input_widget.value = response
                 input_widget.cursor_position = len(response)

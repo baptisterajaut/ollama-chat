@@ -191,6 +191,18 @@ Both modes start with a "waiting for first token" spinner and track TTFT.
 - Status bar shows `⚠ Context length probably exceeded` when over 100%
 - One-shot system message warning at 80% usage suggesting `/compact`
 
+## Code quality
+
+Run linters before committing (from venv):
+
+```bash
+pylint ochat/ ochat.py
+pyflakes ochat/ ochat.py
+radon cc ochat/ ochat.py -s -a
+```
+
+**Rules**: no D or F in cyclomatic complexity. C is tolerable for orchestrator functions. Target A/B for new code. Ignore pylint `E0401` (import-error) — false positives from venv-only deps.
+
 ## Notes for future development
 
 - No conversation persistence yet (could add /save, /load commands)

@@ -196,6 +196,41 @@ Log files are written to temp (auto-cleaned after 7 days):
 - **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
 - **Windows**: `%TEMP%\ollama-chat-YYYYMMDD-HHMMSS.log`
 
+## Code quality
+
+Average cyclomatic complexity: **B (5.1)** — no D or F.
+
+<details>
+<summary>Functions rated B and C (radon cc)</summary>
+
+| Function | File | CC | Grade |
+|----------|------|----|-------|
+| `_handle_command` | commands.py | 20 | C |
+| `_generate_response` | generation.py | 16 | C |
+| `main` | app.py | 14 | C |
+| `run_setup` | config.py | 13 | C |
+| `_handle_config_command` | commands.py | 12 | C |
+| `_handle_compact` | commands.py | 12 | C |
+| `_handle_personality_command` | commands.py | 10 | B |
+| `_handle_project_toggle` | commands.py | 9 | B |
+| `_status_text` | app.py | 9 | B |
+| `load_config` | config.py | 9 | B |
+| `switch_config_to_default` | config.py | 9 | B |
+| `_connect_ollama` | config.py | 9 | B |
+| `_consume_chunks` | generation.py | 8 | B |
+| `_save_new_profile` | config.py | 8 | B |
+| `_handle_retry` | commands.py | 7 | B |
+| `_show_greeting` | app.py | 7 | B |
+| `on_input_submitted` | app.py | 7 | B |
+| `load_system_prompt` | config.py | 7 | B |
+| `_select_numbered` | config.py | 7 | B |
+| `save_config` | config.py | 6 | B |
+| `_handle_impersonate` | commands.py | 6 | B |
+| `_handle_impersonate_short` | commands.py | 6 | B |
+| `CommandSuggester` | widgets.py | 6 | B |
+
+</details>
+
 ## Alternatives
 
 If you want a more full-featured Ollama TUI, check out [parllama](https://github.com/paulrobello/parllama) and [oterm](https://github.com/ggozad/oterm). Both are capable and well-maintained. Their busier interfaces weren't to my taste — this project exists because I wanted a clean, single-screen interface with no panels or sidebars to manage.
