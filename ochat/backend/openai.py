@@ -70,3 +70,6 @@ class OpenAIBackend:
         else:
             total_tokens = len(content) // 4
         return content, total_tokens
+
+    def get_info(self) -> dict:
+        return {}

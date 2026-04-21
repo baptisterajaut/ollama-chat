@@ -26,24 +26,29 @@ class OllamaBackend:
 
     def chat(self, model: str, messages: list[dict], stream: bool,
              num_ctx: int = 4096, model_options: dict | None = None) -> dict:
-        options = {"num_ctx": num_ctx, **(model_options or {})}
-        result = self.client.chat(
-            model=model, messages=messages, stream=stream, options=options,
-        )
-        # Track usage from the first chunk (ollama streaming yields chunks with eval_count)
-        if isinstance(result, dict):
-            # Non-streaming
-            self._context_tokens = result.get("eval_count", 0)
-        return result
+        opts = {"num_ctx": num_ctx, **(model_options or {})}
+        # `think` is a top-level kwarg in ollama-python, not an option
+        think = opts.pop("think", None)
+        kwargs = {"model": model, "messages": messages, "stream": stream, "options": opts}
+        if think is not None:
+            kwargs["think"] = think
+        return self.client.chat(**kwargs)
 
     def list_models(self) -> list[str]:
-        response = self.client.list()
-        return [m.model for m in response.models]
+        from pydantic import ValidationError
+        try:
+            response = self.client.list()
+            return [m.model for m in response.models]
+        except ValidationError:
+            # Some servers (e.g. llama.cpp's ollama compat) return partial schema
+            raw = self.client._request_raw('GET', '/api/tags')
+            data = raw.json()
+            return [m.get("model", m.get("name", "")) for m in data.get("models", [])]
 
     def extract_chunk(self, chunk) -> tuple[str, str]:
         message = chunk.get("message", {})
-        reasoning = message.get("reasoning_content", "") or ""
-        content = message.get("content", "")
+        reasoning = message.get("thinking", "") or ""
+        content = message.get("content", "") or ""
         if chunk.get("eval_count"):
             self._context_tokens = chunk["eval_count"]
         return reasoning, content
@@ -53,3 +58,6 @@ class OllamaBackend:
         tokens = result.get("eval_count", len(content) // 4)
         self._context_tokens = tokens
         return content, tokens
+
+    def get_info(self) -> dict:
+        return {}

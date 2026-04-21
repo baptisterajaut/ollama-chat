@@ -26,8 +26,7 @@ def check_config_migration() -> None:
         print(f"Migrated config from {OLD_CONFIG_DIR} to {NEW_CONFIG_DIR}")
     elif OLD_CONFIG_DIR.exists() and NEW_CONFIG_DIR.exists():
         print("Warning: old config dir detected alongside new one, please check it manually")
-CONFIG_FILE = CONFIG_DIR / "config.conf"
-PERSONALITIES_DIR = CONFIG_DIR / "personalities"
+
 
 # Bundled personalities (shipped with the app)
 BUNDLED_PERSONALITIES_DIR = Path(__file__).parent.parent / "personalities"
@@ -315,8 +314,6 @@ def _backup_config_interactive(config: dict, default_name: str = "") -> None:
 
 def __connect_backend(host: str, backend_type: str, verify_ssl: bool) -> tuple[list[str], bool]:
     """Connect to backend, handle SSL retry. Returns (models, verify_ssl)."""
-    from ochat.backend import OllamaBackend, OpenAIBackend, LlamaCppBackend
-    
     if backend_type == "ollama":
         client = ollama.Client(host=host, verify=verify_ssl)
         try:
@@ -399,8 +396,6 @@ def __connect_backend(host: str, backend_type: str, verify_ssl: bool) -> tuple[l
     
     else:
         print(f"Unknown backend type: {backend_type}")
-        sys.exit(1)
-        print(f"Connection error: {e}")
         sys.exit(1)
 
 

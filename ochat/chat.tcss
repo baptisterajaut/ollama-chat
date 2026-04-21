@@ -31,7 +31,6 @@ ChatContainer {
     color: #888;
     text-style: italic;
     padding: 0 1;
-    border-left: solid #888;
 }
 
 .message.system-info {

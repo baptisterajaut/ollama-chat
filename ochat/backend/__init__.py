@@ -97,10 +97,14 @@ class AutoBackend:
         backend = self._detect()
         return backend.list_models()
 
-    def extract_chunk(self, chunk) -> str:
+    def extract_chunk(self, chunk) -> tuple[str, str]:
         backend = self._detect()
         return backend.extract_chunk(chunk)
 
     def extract_result(self, result) -> tuple[str, int]:
         backend = self._detect()
         return backend.extract_result(result)
+
+    def get_info(self) -> dict:
+        backend = self._detect()
+        return backend.get_info()

@@ -68,29 +68,31 @@ class GenerationMixin:
                 if reasoning:
                     response_reasoning += reasoning
 
-                response_text, response_reasoning, tokens_generated, cancelled = await self._consume_chunks(
+            response_text, response_reasoning, tokens_generated, cancelled = await self._consume_chunks(
                 stream, assistant_msg, chat, status, start_time,
                 response_text, response_reasoning, tokens_generated,
             )
 
-                # Non-streaming: show buffered response after completion
-                if not self.streaming and not cancelled:
-                    think_time = time.time() - start_time
-                    await assistant_msg.update(
-                        f"*thought for {think_time:.1f}s*\n\n{response_text}",
-                        reasoning=response_reasoning,
-                    )
-                    chat.scroll_end(animate=False)
+            # Non-streaming: show buffered response after completion
+            if not self.streaming and not cancelled and response_text:
+                think_time = time.time() - start_time
+                await assistant_msg.update(
+                    f"*thought for {think_time:.1f}s*\n\n{response_text}",
+                    reasoning=response_reasoning,
+                )
+                chat.scroll_end(animate=False)
 
             if cancelled:
-                await assistant_msg.update("● *[cancelled]*")
+                await assistant_msg.update("*[cancelled]*", reasoning=response_reasoning)
                 if response_text:
                     self.messages.append({"role": "assistant", "content": response_text})
-            else:
+            elif response_text or response_reasoning:
                 self.messages.append({"role": "assistant", "content": response_text})
                 self.last_gen_time = time.time() - start_time
                 self.last_tokens = tokens_generated
                 self.total_tokens += tokens_generated
+            else:
+                await assistant_msg.update("● *[no response]*")
 
         except Exception as e:
             _log.exception("Generation error")
@@ -198,7 +200,7 @@ class GenerationMixin:
                 self._pending_suggestion = response
                 input_widget.placeholder = response
                 _log.debug("Auto-suggest set: %s", response[:80])
-        except Exception:  # CancelledError is BaseException in 3.9+, propagates through
+        except Exception:  # CancelledError is BaseException, propagates through naturally
             _log.debug("Auto-suggest failed", exc_info=True)
 
     async def _animate_spinner(self, msg: Message, status: Static, start_time: float, label: str) -> None:

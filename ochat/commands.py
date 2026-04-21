@@ -355,7 +355,7 @@ class CommandsMixin:
 
                 # Phase 2: buffer response, show progress
                 if first_chunk:
-                    content = self._extract_chunk(first_chunk)
+                    _, content = self._extract_chunk(first_chunk)
                     if content:
                         summary += content
                         chunks += 1
@@ -364,7 +364,7 @@ class CommandsMixin:
                         chunk = await self._anext(stream)
                         if chunk is _STREAM_DONE:
                             break
-                        content = self._extract_chunk(chunk)
+                        _, content = self._extract_chunk(chunk)
                         if content:
                             summary += content
                             chunks += 1

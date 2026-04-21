@@ -4,7 +4,8 @@ from typing import Protocol
 class BackendProtocol(Protocol):
     """Protocol for LLM backend implementations."""
 
-    def chat(self, messages: list[dict], stream: bool):
+    def chat(self, model: str, messages: list[dict], stream: bool,
+             num_ctx: int = 4096, model_options: dict | None = None):
         """Make a chat completion call. Returns stream or result."""
         ...
 

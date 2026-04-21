@@ -11,9 +11,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import ollama
-import openai
-
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -112,15 +109,6 @@ class OChat(CommandsMixin, GenerationMixin, App):
         self.sys_instructions = self._load_system_instructions()
         if system_prompt:
             self.messages.append({"role": "system", "content": system_prompt})
-
-    @property
-    def openai_client(self):
-        """Legacy property for backwards compatibility."""
-        if self.backend_type == "openai":
-            return self.backend._client
-        if self.backend_type == "llama_cpp":
-            return self.backend._client
-        raise AttributeError("openai_client only available for openai/llama_cpp backends")
 
     def _create_backend(self, backend_type: str, host: str, verify_ssl: bool):
         """Create backend instance based on type."""
@@ -259,35 +247,19 @@ class OChat(CommandsMixin, GenerationMixin, App):
         chat = self.query_one("#chat", ChatContainer)
         config_line = f"config: {self.config_name} · " if self.config_name else ""
 
-        # Try Ollama first, then OpenAI fallback (auto mode)
         mode_label = ""
-        if self.backend_type == "auto":
-            try:
-                await asyncio.to_thread(self.backend._ollama.list_models)
-                self.api_mode = "ollama"
-                _log.info("Connected in Ollama mode")
+        try:
+            await asyncio.to_thread(self.backend.list_models)
+            self.api_mode = self.backend.type
+            _log.info("Connected in %s mode", self.api_mode)
+            if self.backend_type == "auto":
+                mode_label = f"Connected ({self.api_mode})"
+            else:
                 mode_label = "Connected"
-            except Exception as e:
-                _log.info("Ollama list failed (%s), trying OpenAI fallback", e)
-                try:
-                    await asyncio.to_thread(self.backend._openai.list_models)
-                    self.api_mode = "openai"
-                    _log.info("Connected in OpenAI-compatible mode")
-                    mode_label = "Connected (OpenAI mode)"
-                except Exception as e2:
-                    _log.warning("OpenAI fallback failed: %s", e2)
-                    await self._show_system_message("Warning: Cannot connect to server")
-                    return
-        else:
-            try:
-                await asyncio.to_thread(self.backend.list_models)
-                self.api_mode = self.backend_type
-                _log.info("Connected in %s mode", self.backend_type)
-                mode_label = "Connected"
-            except Exception as e:
-                _log.warning("Backend list failed: %s", e)
-                await self._show_system_message("Warning: Cannot connect to server")
-                return
+        except Exception as e:
+            _log.warning("Backend list failed: %s", e)
+            await self._show_system_message("Warning: Cannot connect to server")
+            return
 
         logo = f"""\
   ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -371,6 +343,8 @@ class OChat(CommandsMixin, GenerationMixin, App):
             self._generation_cancelled = True
             self.notify("Cancelled", timeout=2)
         else:
+            if self._auto_suggest_task and not self._auto_suggest_task.done():
+                self._auto_suggest_task.cancel()
             self.exit()
 
     def action_toggle_streaming(self) -> None:

@@ -3,8 +3,6 @@
 import httpx
 import openai
 
-from .base import BackendProtocol  # noqa: F401
-
 
 class LlamaCppBackend:
     """Backend for llama.cpp server (/v1/chat/completions + /info)."""
@@ -61,9 +59,10 @@ class LlamaCppBackend:
                     data = resp.json()
                     if path == "/v1/models":
                         models_data = data.get("data", [])
-                        if models_data:
-                            self._n_ctx = models_data[0].get("n_ctx", 4096)
+                        if models_data and "n_ctx" in models_data[0]:
+                            self._n_ctx = models_data[0]["n_ctx"]
                             return
+                        # n_ctx not exposed on /v1/models, try /info
                     else:
                         self._info_cache = data
                         self._n_ctx = data.get("n_ctx", 4096)
