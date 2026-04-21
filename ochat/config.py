@@ -458,7 +458,26 @@ def run_setup(create_new: bool = False) -> None:
     model = _select_numbered("models", models, default_idx)
 
     # 3. Ask for context size
-    num_ctx = _input_positive_int("Context size", config["num_ctx"])
+    if backend == "llama_cpp":
+        # Fetch server info for llama.cpp
+        try:
+            import httpx
+            url = f"{host.rstrip('/')}/info"
+            with httpx.Client(verify=verify_ssl) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                info = resp.json()
+                server_n_ctx = info.get("n_ctx", "unknown")
+                print(f"\nServer n_ctx: {server_n_ctx} (server-determined, advisory value below)")
+        except Exception:
+            server_n_ctx = "unknown"
+            print(f"\nCould not fetch server info — n_ctx will be advisory")
+        num_ctx = _input_positive_int("Advisory context size", config["num_ctx"])
+    elif backend == "openai":
+        print("\nContext size: N/A (server-determined)")
+        num_ctx = config["num_ctx"]
+    else:
+        num_ctx = _input_positive_int("Context size", config["num_ctx"])
 
     # 4. Select personality
     ensure_personalities_dir()
