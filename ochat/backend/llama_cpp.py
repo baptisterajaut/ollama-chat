@@ -3,7 +3,7 @@
 import httpx
 import openai
 
-from .base import BackendProtocol
+from .base import BackendProtocol  # noqa: F401
 
 
 class LlamaCppBackend:

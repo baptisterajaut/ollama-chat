@@ -471,7 +471,7 @@ def run_setup(create_new: bool = False) -> None:
                 print(f"\nServer n_ctx: {server_n_ctx} (server-determined, advisory value below)")
         except Exception:
             server_n_ctx = "unknown"
-            print(f"\nCould not fetch server info — n_ctx will be advisory")
+            print("\nCould not fetch server info — n_ctx will be advisory")
         num_ctx = _input_positive_int("Advisory context size", config["num_ctx"])
     elif backend == "openai":
         print("\nContext size: N/A (server-determined)")
