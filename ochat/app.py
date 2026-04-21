@@ -25,6 +25,7 @@ from ochat.commands import CommandsMixin
 from ochat.config import (
     CONFIG_DIR,
     CONFIG_FILE,
+    check_config_migration,
     list_configs,
     load_config,
     load_project_prompt,
@@ -43,7 +44,7 @@ def _cleanup_old_logs():
     """Remove log files older than 7 days."""
     log_dir = Path(tempfile.gettempdir())
     cutoff = time.time() - 7 * 86400
-    for f in log_dir.glob("ollama-chat-*.log"):
+    for f in log_dir.glob("ochat-*.log"):
         try:
             if f.stat().st_mtime < cutoff:
                 f.unlink()
@@ -395,6 +396,8 @@ class OChat(CommandsMixin, GenerationMixin, App):
 
 
 def main():
+    check_config_migration()
+    
     # First run: launch setup wizard
     if not CONFIG_FILE.exists():
         run_setup()
@@ -450,7 +453,7 @@ def main():
     args = parser.parse_args()
 
     if args.debug:
-        log_file = Path(tempfile.gettempdir()) / f"ollama-chat-{datetime.now():%Y%m%d-%H%M%S}.log"
+        log_file = Path(tempfile.gettempdir()) / f"ochat-{datetime.now():%Y%m%d-%H%M%S}.log"
         handler = logging.FileHandler(str(log_file))
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         logger = logging.getLogger("ochat")

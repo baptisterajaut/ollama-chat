@@ -1,4 +1,4 @@
-"""Configuration management for ollama-chat."""
+"""Configuration management for ochat."""
 
 import configparser
 import os
@@ -10,7 +10,22 @@ from pathlib import Path
 import ollama
 
 # Config paths
-CONFIG_DIR = Path.home() / ".config" / "ollama-chat"
+OLD_CONFIG_DIR = Path.home() / ".config" / "ollama-chat"
+NEW_CONFIG_DIR = Path.home() / ".config" / "ochat"
+CONFIG_DIR = NEW_CONFIG_DIR
+
+# Config file
+CONFIG_FILE = CONFIG_DIR / "config.conf"
+PERSONALITIES_DIR = CONFIG_DIR / "personalities"
+
+
+def check_config_migration() -> None:
+    """Migrate from old config dir (~/.config/ollama-chat) to new one (~/.config/ochat)."""
+    if OLD_CONFIG_DIR.exists() and not NEW_CONFIG_DIR.exists():
+        shutil.move(str(OLD_CONFIG_DIR), str(NEW_CONFIG_DIR))
+        print(f"Migrated config from {OLD_CONFIG_DIR} to {NEW_CONFIG_DIR}")
+    elif OLD_CONFIG_DIR.exists() and NEW_CONFIG_DIR.exists():
+        print("Warning: old config dir detected alongside new one, please check it manually")
 CONFIG_FILE = CONFIG_DIR / "config.conf"
 PERSONALITIES_DIR = CONFIG_DIR / "personalities"
 
@@ -33,9 +48,14 @@ DEFAULT_CONFIG = {
 }
 
 
-def get_default_host() -> str:
+def get_default_host(backend: str = "ollama") -> str:
     """Get default host from environment or fallback."""
-    return os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    if backend == "ollama":
+        env_host = os.environ.get("OLLAMA_HOST")
+        if env_host:
+            return env_host
+        return "http://localhost:11434"
+    return "http://localhost:8080"
 
 
 def ensure_personalities_dir() -> None:
@@ -440,8 +460,14 @@ def run_setup(create_new: bool = False) -> None:
     backend = _select_numbered("backends", backends, backend_idx)
 
     # 2. Ask for host
-    default_host = config["host"]
-    host = input(f"Host [{default_host}]: ").strip() or default_host
+    if create_new:
+        default_host = get_default_host(backend)
+    else:
+        default_host = config["host"]
+    raw_host = input(f"Host [{default_host}]: ").strip() or default_host
+    if not raw_host.startswith(("http://", "https://")):
+        raw_host = "http://" + raw_host
+    host = raw_host
 
     # 3. Connect and select model
     verify_ssl = config.get("verify_ssl", True)
@@ -457,21 +483,35 @@ def run_setup(create_new: bool = False) -> None:
         default_idx = models.index(config["model"]) + 1
     model = _select_numbered("models", models, default_idx)
 
-    # 3. Ask for context size
+  # 3. Ask for context size
     if backend == "llama_cpp":
-        # Fetch server info for llama.cpp
-        try:
-            import httpx
-            url = f"{host.rstrip('/')}/info"
-            with httpx.Client(verify=verify_ssl) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                info = resp.json()
-                server_n_ctx = info.get("n_ctx", "unknown")
-                print(f"\nServer n_ctx: {server_n_ctx} (server-determined, advisory value below)")
-        except Exception:
-            server_n_ctx = "unknown"
-            print("\nCould not fetch server info — n_ctx will be advisory")
+        # Try /v1/models first (standard), then /info (llama.cpp-specific)
+        server_n_ctx = None
+        for path in ["/v1/models", "/info"]:
+            try:
+                import httpx
+                url = f"{host.rstrip('/')}{path}"
+                with httpx.Client(verify=verify_ssl) as client:
+                    resp = client.get(url)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if path == "/v1/models":
+                        # /v1/models returns {"data": [{"id", "n_ctx", ...}]}
+                        models_data = data.get("data", [])
+                        if models_data:
+                            server_n_ctx = models_data[0].get("n_ctx")
+                    else:
+                        # /info returns {"n_ctx": ..., ...}
+                        server_n_ctx = data.get("n_ctx")
+                    if server_n_ctx is not None:
+                        break
+            except Exception:
+                continue
+        if server_n_ctx is not None:
+            print(f"\nServer n_ctx: {server_n_ctx}")
+            print("Context size below is advisory (server-determined)")
+        else:
+            print("\nCould not fetch server n_ctx — context size will be advisory")
         num_ctx = _input_positive_int("Advisory context size", config["num_ctx"])
     elif backend == "openai":
         print("\nContext size: N/A (server-determined)")

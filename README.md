@@ -1,8 +1,10 @@
-# ollama-chat
+# ochat (formerly ollama-chat)
 
 *Made with Claude to talk with non-Claude.*
 
-A setup-and-forget Ollama chat TUI. One screen, no sub-menus, plenty of creature comforts.
+Named "ollama-chat" because it started that way. Now a multi-backend TUI client (Ollama, OpenAI-compatible, llama.cpp) — just `ochat`.
+
+A setup-and-forget multi-backend TUI chat client. One screen, no sub-menus, plenty of creature comforts.
 
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-public%20domain-brightgreen)
@@ -34,12 +36,12 @@ This project was entirely vibe-coded with Claude. It does exactly what I need.
 - Generation stats (TTFT, tokens/s) in status bar and `/stats`
 - Persistent configuration
 - Pass-through for any Ollama model option (temperature, top_p, etc.) via config file
-- OpenAI-compatible API fallback (LM Studio, llama.cpp, vLLM, etc.) - **untested**
+- Multi-backend support: Ollama (default), OpenAI-compatible (LM Studio, vLLM), llama.cpp server, or auto-detect
 
 ## Non-features
 
 - It's just a client. No plan to have it start Ollama by itself or llama-cpp-python or anything
-- Made for Ollama only, OpenAI fallback is there "just in case" and is not tested
+- Made for Ollama first, but supports OpenAI-compatible servers (LM Studio, vLLM) and llama.cpp server as first-class backends
 - No conversation persistence yet (could use `agent.md` generation as lightweight conversation memory in the future)
 - No multi-model conversations
 - No model templates (chat templates are handled by Ollama/your server)
@@ -115,7 +117,7 @@ ochat --help             # Show options
 
 ## Configuration
 
-Config lives in `~/.config/ollama-chat/`:
+Config lives in `~/.config/ochat/`:
 - `config.conf` - Default settings (host, model, context size, etc.)
 - `*.conf` - Named config profiles
 - `personalities/` - System prompt templates (`.md` files)
@@ -153,18 +155,27 @@ repeat_penalty = 1.1
 
 See [Ollama docs](https://docs.ollama.com/modelfile#valid-parameters-and-values) for available options. Not exposed in the setup wizard - edit the config file manually.
 
-### OpenAI-compatible mode (untested)
+### Backend modes
 
-If Ollama isn't available at the configured host, the app falls back to OpenAI-compatible API mode. This should work with LM Studio, llama.cpp server, vLLM, text-generation-inference, and other servers exposing the standard `/v1/chat/completions` endpoint.
+Configure in `config.conf` under `[defaults] backend`: `ollama`, `openai`, `llama_cpp`, or `auto`.
 
-**Limitations in OpenAI mode:**
+**Ollama** (default): Full feature support — model listing, `num_ctx`, `model_options`, real token tracking.
+
+**OpenAI-compatible**: Works with LM Studio, vLLM, text-generation-inference, and other servers exposing `/v1/chat/completions`. Uses the `openai` Python client. Limitations:
 - No interactive model selection (model listing is used for connection testing only — you must configure the model name manually)
 - `num_ctx` and `model_options` are ignored (server-side settings apply)
 - Context usage tracking is disabled (percentages and warnings don't apply)
 - Setup wizard won't work (configure `config.conf` manually)
 
+**Llama.cpp**: Uses llama.cpp server's `/v1/chat/completions` and `/info` endpoints. Supports `num_ctx` via `/info` and real token tracking via `include_usage`.
+
+**Auto**: Tries Ollama → llama.cpp → OpenAI in sequence.
+
 **To use with LM Studio:**
 ```ini
+[defaults]
+backend = openai
+
 [server]
 host = http://localhost:1234
 
@@ -182,7 +193,7 @@ host = https://my-homelab:11434
 verify_ssl = false
 ```
 
-The greeting will show "Connected (OpenAI mode)" when using this fallback.
+The greeting will show the backend type: `Connected (Ollama)`, `Connected (OpenAI)`, `Connected (llama.cpp)`, or `Connected (auto)`.
 
 ## Debugging
 
@@ -193,8 +204,8 @@ ochat -d
 ```
 
 Log files are written to temp (auto-cleaned after 7 days):
-- **Unix/Mac**: `/tmp/ollama-chat-YYYYMMDD-HHMMSS.log`
-- **Windows**: `%TEMP%\ollama-chat-YYYYMMDD-HHMMSS.log`
+- **Unix/Mac**: `/tmp/ochat-YYYYMMDD-HHMMSS.log`
+- **Windows**: `%TEMP%\ochat-YYYYMMDD-HHMMSS.log`
 
 ## Code quality
 
