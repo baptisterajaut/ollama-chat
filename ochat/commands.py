@@ -26,7 +26,7 @@ _log = logging.getLogger(__name__)
 
 
 class CommandsMixin:
-    """Mixin providing slash command handling for OllamaChat."""
+    """Mixin providing slash command handling for OChat."""
 
     async def _handle_command(self, raw_cmd: str) -> bool:
         """Handle slash commands. Returns True if command was handled."""
