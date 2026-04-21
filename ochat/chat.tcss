@@ -28,10 +28,10 @@ ChatContainer {
 }
 
 .message.assistant MarkdownBlockQuote {
-    color: $text-muted;
+    color: #888;
     text-style: italic;
     padding: 0 1;
-    border-left: solid $text-muted;
+    border-left: solid #888;
 }
 
 .message.system-info {
