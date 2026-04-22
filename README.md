@@ -28,8 +28,8 @@ This project was entirely vibe-coded with Claude. It does exactly what I need.
 - Switchable personalities (system prompts)
 - Multiple config profiles (easily switch between setups)
 - Project-specific prompts (auto-loads `agent.md`/`system.md` from current directory)
-- Slash commands (`/help`, `/retry`, `/personality`, `/config`, `/impersonate`, etc.)
-- Keyboard shortcuts (Ctrl+O toggle streaming, Escape to cancel, etc.)
+- Slash commands (`/help`, `/retry`, `/undo`, `/personality`, `/config`, `/impersonate`, etc.)
+- Keyboard shortcuts (Ctrl+C cascade, Escape to cancel generation, Ctrl+O toggle streaming, Ctrl+T toggle reasoning, etc.)
 - Auto-suggest: after each response, a short suggestion appears in the input (Tab to accept)
 - Impersonate mode: LLM suggests what you'd say next (`/imp` long-form, `/imps` short)
 - Context tracking with usage warnings and `/compact` to summarize conversation
@@ -87,11 +87,12 @@ ochat --help             # Show options
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+C` | Clear input |
+| `Ctrl+C` | Cascade: clear input → cancel generation → double-press to quit |
 | `Ctrl+D` | Quit |
 | `Ctrl+L` | Clear chat |
 | `Ctrl+O` | Toggle streaming |
-| `Escape` | Cancel generation / Quit |
+| `Ctrl+T` | Toggle reasoning (thinking) |
+| `Escape` | Cancel generation |
 | `Tab` | Accept suggestion / autocomplete command |
 
 ### Slash commands
@@ -100,6 +101,7 @@ ochat --help             # Show options
 |---------|--------|
 | `/help` | Show help |
 | `/retry` | Regenerate last response |
+| `/undo` | Remove last exchange, restore user message to input |
 | `/copy` | Copy last response to clipboard |
 | `/clear` | Clear chat history |
 | `/personality` | List/switch personalities |
@@ -107,6 +109,7 @@ ochat --help             # Show options
 | `/impersonate` | Generate suggested user response (long-form) |
 | `/imps` | Short impersonate (under 15 words) |
 | `/suggest` | Toggle auto-suggest after responses |
+| `/thinking` | Toggle reasoning at inference level |
 | `/project` | Toggle project prompt merge |
 | `/prompt` | Show current system prompt |
 | `/sys <msg>` | Inject a system message (alias: `/system`) |
@@ -209,36 +212,22 @@ Log files are written to temp (auto-cleaned after 7 days):
 
 ## Code quality
 
-Average cyclomatic complexity: **B (5.1)** — no D or F.
+Average cyclomatic complexity: **A (3.3)** — no D or F.
 
 <details>
-<summary>Functions rated B and C (radon cc)</summary>
+<summary>Functions rated C (radon cc)</summary>
 
 | Function | File | CC | Grade |
 |----------|------|----|-------|
-| `_handle_command` | commands.py | 20 | C |
-| `_generate_response` | generation.py | 16 | C |
+| `run_setup` | config.py | 18 | C |
+| `_handle_undo` | commands.py | 14 | C |
 | `main` | app.py | 14 | C |
-| `run_setup` | config.py | 13 | C |
+| `_consume_chunks` | generation.py | 13 | C |
 | `_handle_config_command` | commands.py | 12 | C |
-| `_handle_compact` | commands.py | 12 | C |
-| `_handle_personality_command` | commands.py | 10 | B |
-| `_handle_project_toggle` | commands.py | 9 | B |
-| `_status_text` | app.py | 9 | B |
-| `load_config` | config.py | 9 | B |
-| `switch_config_to_default` | config.py | 9 | B |
-| `_connect_ollama` | config.py | 9 | B |
-| `_consume_chunks` | generation.py | 8 | B |
-| `_save_new_profile` | config.py | 8 | B |
-| `_handle_retry` | commands.py | 7 | B |
-| `_show_greeting` | app.py | 7 | B |
-| `on_input_submitted` | app.py | 7 | B |
-| `load_system_prompt` | config.py | 7 | B |
-| `_select_numbered` | config.py | 7 | B |
-| `save_config` | config.py | 6 | B |
-| `_handle_impersonate` | commands.py | 6 | B |
-| `_handle_impersonate_short` | commands.py | 6 | B |
-| `CommandSuggester` | widgets.py | 6 | B |
+| `_handle_command` | commands.py | 12 | C |
+| `switch_config_to_default` | config.py | 12 | C |
+| `_handle_compact` | commands.py | 11 | C |
+| `_status_text` | app.py | 11 | C |
 
 </details>
 

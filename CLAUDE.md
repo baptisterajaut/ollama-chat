@@ -91,17 +91,18 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 
 ## Keyboard shortcuts
 
-- **Ctrl+C** - Clear input
+- **Ctrl+C** - Cascade: clear input → cancel generation → double-press to quit
 - **Ctrl+D** - Quit
 - **Ctrl+L** - Clear chat history
 - **Ctrl+O** - Toggle streaming mode (saved to config)
-- **Escape** - Cancel generation / Quit
+- **Escape** - Cancel generation (no-op otherwise)
 
 ## Slash commands
 
 - `/help`, `/h` - Show help
 - `/clear`, `/c` - Clear chat history
 - `/retry`, `/r` - Regenerate last response
+- `/undo`, `/u` - Remove last exchange, restore user message to input
 - `/copy` - Copy last response to clipboard
 - `/context`, `/ctx` - Show context info
 - `/prompt` - Show system prompt
