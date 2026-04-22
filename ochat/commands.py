@@ -95,6 +95,7 @@ class CommandsMixin:
         def _clear_suggestion(self, input_widget: Any = None) -> None:
             raise NotImplementedError
         _auto_suggest_task: Any
+        _generation_task: Any
 
         # --- methods from GenerationMixin (also composed on OChat) ---
         async def _chat_call(self, messages: list[dict], stream: bool,
@@ -254,8 +255,8 @@ class CommandsMixin:
                 await child.remove()
                 break
 
-        # Regenerate
-        await self._generate_response()
+        # Regenerate — spawn as a task (see on_input_submitted for why).
+        self._generation_task = asyncio.create_task(self._generate_response())
 
     async def _handle_copy(self) -> None:
         """Copy last assistant response to clipboard."""

@@ -64,12 +64,12 @@ class OChat(CommandsMixin, GenerationMixin, App):
     DEFAULT_PLACEHOLDER = "Message... (/help for commands)"
 
     BINDINGS = [
-        Binding("ctrl+c", "interrupt", "Clear/Cancel/Quit", show=False),
+        Binding("ctrl+c", "interrupt", "Clear/Cancel/Quit", show=False, priority=True),
         Binding("ctrl+d", "quit", "Quit"),
         Binding("ctrl+l", "clear", "Clear"),
         Binding("ctrl+o", "toggle_streaming", "Stream"),
         Binding("ctrl+t", "toggle_thinking", "Think"),
-        Binding("escape", "cancel", "Cancel"),
+        Binding("escape", "cancel", "Cancel", priority=True),
         Binding("tab", "focus_input", show=False, priority=True),
         Binding("shift+tab", "focus_input", show=False, priority=True),
     ]
@@ -109,6 +109,7 @@ class OChat(CommandsMixin, GenerationMixin, App):
         self.auto_suggest = auto_suggest
         self.thinking_enabled = thinking_enabled
         self._auto_suggest_task: asyncio.Task | None = None
+        self._generation_task: asyncio.Task | None = None
         self._pending_suggestion: str = ""
         self._generation_cancelled = False
         self._last_ctrl_c: float = 0.0
@@ -345,10 +346,14 @@ class OChat(CommandsMixin, GenerationMixin, App):
         await chat.mount(Message(user_input, "user"))
         chat.scroll_end(animate=False)
 
-        # Let UI refresh before blocking on generation
+        # Let UI refresh before spawning generation
         await asyncio.sleep(0)
 
-        await self._generate_response()
+        # Spawn as a task so the App message pump stays free to dispatch
+        # key/click events (Escape-cancel, reasoning-block clicks) while
+        # the stream runs. `await`ing here holds the pump for the full
+        # duration and starves input handling.
+        self._generation_task = asyncio.create_task(self._generate_response())
 
     def action_interrupt(self) -> None:
         """Ctrl+C cascade: clear input → cancel generation → double-press quits."""
