@@ -29,7 +29,7 @@ This project was entirely vibe-coded with Claude. It does exactly what I need.
 - Multiple config profiles (easily switch between setups)
 - Project-specific prompts (auto-loads `agent.md`/`system.md` from current directory)
 - Slash commands (`/help`, `/retry`, `/undo`, `/personality`, `/config`, `/impersonate`, etc.)
-- Keyboard shortcuts (Ctrl+C cascade, Escape to cancel generation, Ctrl+O toggle streaming, Ctrl+T toggle reasoning, etc.)
+- Keyboard shortcuts (Ctrl+C cascade, Escape to cancel generation, Ctrl+R retry, Ctrl+U undo, Ctrl+G generate, etc.)
 - Auto-suggest: after each response, a short suggestion appears in the input (Tab to accept)
 - Impersonate mode: LLM suggests what you'd say next (`/imp` long-form, `/imps` short)
 - Context tracking with usage warnings and `/compact` to summarize conversation
@@ -89,11 +89,14 @@ ochat --help             # Show options
 |-----|--------|
 | `Ctrl+C` | Cascade: clear input → cancel generation → double-press to quit |
 | `Ctrl+D` | Quit |
-| `Ctrl+L` | Clear chat |
-| `Ctrl+O` | Toggle streaming |
-| `Ctrl+T` | Toggle reasoning (thinking) |
+| `Ctrl+L` | Clear chat (double-press to confirm) |
+| `Ctrl+R` | Retry last response (double-press to confirm) |
+| `Ctrl+U` | Undo last exchange (double-press to confirm) |
+| `Ctrl+G` | Generate user message (ignored if input is non-empty) |
 | `Escape` | Cancel generation |
 | `Tab` | Accept suggestion / autocomplete command |
+
+Destructive shortcuts (clear, retry, undo) require a confirmation press within 2s. Config toggles (streaming, thinking) are command-only (`/stream`, `/thinking`) — they're settings, not runtime actions.
 
 ### Slash commands
 
@@ -106,10 +109,11 @@ ochat --help             # Show options
 | `/clear` | Clear chat history |
 | `/personality` | List/switch personalities |
 | `/config` | List/switch config profiles (restarts app) |
-| `/impersonate` | Generate suggested user response (long-form) |
+| `/impersonate`, `/generate`, `/gen` | Generate suggested user response (long-form) |
 | `/imps` | Short impersonate (under 15 words) |
 | `/suggest` | Toggle auto-suggest after responses |
 | `/thinking` | Toggle reasoning at inference level |
+| `/stream` | Toggle streaming mode |
 | `/project` | Toggle project prompt merge |
 | `/prompt` | Show current system prompt |
 | `/sys <msg>` | Inject a system message (alias: `/system`) |

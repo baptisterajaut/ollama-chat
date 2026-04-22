@@ -91,11 +91,16 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 
 ## Keyboard shortcuts
 
+Runtime actions get shortcuts; config toggles (stream/think) are command-only on purpose. All destructive shortcuts require a second press within 2s (`DOUBLE_PRESS_WINDOW`) via `_require_double_press(key, prompt)`.
+
 - **Ctrl+C** - Cascade: clear input → cancel generation → double-press to quit
 - **Ctrl+D** - Quit
-- **Ctrl+L** - Clear chat history
-- **Ctrl+O** - Toggle streaming mode (saved to config)
+- **Ctrl+L** - Clear chat history (double-press)
+- **Ctrl+R** - Retry last response (`/retry`, double-press)
+- **Ctrl+U** - Undo last exchange (`/undo`, double-press)
+- **Ctrl+G** - Generate user message (`/impersonate` / `/generate` / `/gen`, ignored if input is non-empty)
 - **Escape** - Cancel generation (no-op otherwise)
+- **Tab** - Accept auto-suggestion / autocomplete command
 
 ## Slash commands
 
@@ -112,9 +117,11 @@ Config name is shown in greeting: `config: mistral-creative · Connected`
 - `/p <n>` - Switch to personality by number/name
 - `/config` - List config profiles
 - `/config <n>` - Switch to config by number/name (restarts app)
-- `/impersonate`, `/imp` - Generate user response suggestion (long-form)
+- `/impersonate`, `/imp`, `/generate`, `/gen` - Generate user response suggestion (long-form)
 - `/imps` - Short impersonate (suggestion-length, under 15 words)
 - `/suggest` - Toggle auto-suggest after responses
+- `/thinking` - Toggle reasoning at inference level
+- `/stream` - Toggle streaming mode
 - `/project` - Toggle local prompt append
 - `/stats`, `/st` - Show generation statistics (TTFT, t/s, tokens)
 - `/compact` - Summarize conversation to free context

@@ -67,6 +67,8 @@ class GenerationMixin:
             raise NotImplementedError
         async def _show_system_message(self, text: str) -> None:
             raise NotImplementedError
+        async def _rewind_last_user_turn(self) -> bool:
+            raise NotImplementedError
 
         # --- subset of textual.app.App surface actually used here ---
         def query_one(self, selector: str, expect_type: type | None = None) -> Any:
@@ -178,7 +180,14 @@ class GenerationMixin:
                                  text, reasoning, tokens, cancelled):
         """Render the final message state and commit to history."""
         if cancelled:
-            # update() stops the active stream and replaces content.
+            # Pre-TTFT cancel (no content produced): auto-undo the user turn —
+            # nothing was streamed, the prompt had no effect, so rewind entirely
+            # and put the message back in the input. Mid-stream cancel keeps the
+            # partial with a *[cancelled]* marker.
+            if not text and not reasoning:
+                await assistant_msg.remove()
+                await self._rewind_last_user_turn()
+                return
             await assistant_msg.update("*[cancelled]*", reasoning=reasoning)
             if text:
                 self.messages.append({"role": "assistant", "content": text})

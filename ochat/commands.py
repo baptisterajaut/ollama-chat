@@ -38,9 +38,12 @@ class CommandsMixin:
         "/copy": "_handle_copy",
         "/impersonate": "_handle_impersonate",
         "/imp": "_handle_impersonate",
+        "/generate": "_handle_impersonate",
+        "/gen": "_handle_impersonate",
         "/imps": "_handle_impersonate_short",
         "/suggest": "_handle_suggest_toggle",
         "/thinking": "_handle_thinking_toggle",
+        "/stream": "_handle_stream_toggle",
         "/project": "_handle_project_toggle",
         "/stats": "_handle_stats",
         "/st": "_handle_stats",
@@ -174,42 +177,40 @@ class CommandsMixin:
     @staticmethod
     def _help_text() -> str:
         return """**Commands:**
-- `/retry` or `/r` - Regenerate last response
-- `/undo` or `/u` - Remove last exchange, restore message to input
+- `/retry` or `/r` - Regenerate last response (ctrl+r)
+- `/undo` or `/u` - Remove last exchange, restore message to input (ctrl+u)
 - `/copy` - Copy last response to clipboard
-- `/clear` or `/c` - Clear chat history
+- `/clear` or `/c` - Clear chat history (ctrl+l)
 - `/context` or `/ctx` - Show current context info
 - `/prompt` - Show system prompt
 - `/sys <msg>` or `/system <msg>` - Inject a system message
 - `/model` or `/m` - Show current model
 - `/personality` or `/p` - List/change personality
 - `/config` - List/switch config profiles
-- `/impersonate` or `/imp` - Generate user response suggestion
+- `/impersonate`, `/imp`, `/generate`, `/gen` - Generate user response suggestion (ctrl+g)
 - `/imps` - Short impersonate (suggestion-length)
 - `/suggest` - Toggle auto-suggest after responses
-- `/thinking` - Toggle reasoning on/off (ctrl+t)
+- `/thinking` - Toggle reasoning on/off
+- `/stream` - Toggle streaming on/off
 - `/project` - Toggle local prompt append (agent.md)
 - `/stats` or `/st` - Show generation statistics
 - `/compact` - Summarize conversation to free context
 - `/help` or `/h` - Show this help"""
 
-    async def _handle_undo(self) -> None:
-        """Remove the last user↔assistant exchange, restoring the user message to input."""
-        if self.is_generating:
-            return
+    async def _rewind_last_user_turn(self) -> bool:
+        """Pop last user message + subsequent widgets, restore user content to input.
 
-        if not self.messages or self.messages[-1]["role"] != "assistant":
-            await self._show_system_message("Nothing to undo")
-            return
-
+        Returns True if a user turn was rewound. Does NOT check `is_generating` —
+        callers (including cancel auto-undo inside the generation lock) must gate
+        as appropriate.
+        """
         last_user_idx = None
         for i in range(len(self.messages) - 1, -1, -1):
             if self.messages[i]["role"] == "user":
                 last_user_idx = i
                 break
         if last_user_idx is None:
-            await self._show_system_message("Nothing to undo")
-            return
+            return False
 
         user_content = self.messages[last_user_idx]["content"]
         self.messages = self.messages[:last_user_idx]
@@ -235,6 +236,14 @@ class CommandsMixin:
         input_widget.value = user_content
         input_widget.cursor_position = len(user_content)
         input_widget.focus()
+        return True
+
+    async def _handle_undo(self) -> None:
+        """Remove the last exchange, restoring the user message to input."""
+        if self.is_generating:
+            return
+        if not await self._rewind_last_user_turn():
+            await self._show_system_message("Nothing to undo")
 
     async def _handle_retry(self) -> None:
         """Regenerate the last assistant response."""
@@ -531,6 +540,13 @@ class CommandsMixin:
         update_config(thinking_enabled=self.thinking_enabled)
         status = "ON" if self.thinking_enabled else "OFF"
         await self._show_system_message(f"Thinking: **{status}**")
+
+    async def _handle_stream_toggle(self) -> None:
+        """Toggle streaming mode."""
+        self.streaming = not self.streaming
+        update_config(streaming=self.streaming)
+        status = "ON" if self.streaming else "OFF"
+        await self._show_system_message(f"Streaming: **{status}**")
 
     async def _handle_personality_command(self, arg: str) -> None:
         """Handle /personality command for listing and switching personalities."""

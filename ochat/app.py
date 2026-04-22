@@ -30,7 +30,6 @@ from ochat.config import (
     load_system_prompt,
     run_setup,
     switch_config_to_default,
-    update_config,
 )
 from ochat.generation import GenerationMixin
 from ochat.widgets import (
@@ -67,14 +66,15 @@ class OChat(CommandsMixin, GenerationMixin, App):
         Binding("ctrl+c", "interrupt", "Clear/Cancel/Quit", show=False, priority=True),
         Binding("ctrl+d", "quit", "Quit"),
         Binding("ctrl+l", "clear", "Clear"),
-        Binding("ctrl+o", "toggle_streaming", "Stream"),
-        Binding("ctrl+t", "toggle_thinking", "Think"),
+        Binding("ctrl+r", "retry", "Retry", priority=True),
+        Binding("ctrl+u", "undo", "Undo", priority=True),
+        Binding("ctrl+g", "impersonate", "Generate", priority=True),
         Binding("escape", "cancel", "Cancel", priority=True),
         Binding("tab", "focus_input", show=False, priority=True),
         Binding("shift+tab", "focus_input", show=False, priority=True),
     ]
 
-    CTRL_C_DOUBLE_PRESS_WINDOW = 2.0
+    DOUBLE_PRESS_WINDOW = 2.0
 
     def __init__(
         self,
@@ -112,7 +112,7 @@ class OChat(CommandsMixin, GenerationMixin, App):
         self._generation_task: asyncio.Task | None = None
         self._pending_suggestion: str = ""
         self._generation_cancelled = False
-        self._last_ctrl_c: float = 0.0
+        self._last_press: dict[str, float] = {}
         self.total_tokens = 0
         self.last_gen_time = 0.0
         self.last_tokens = 0
@@ -355,27 +355,34 @@ class OChat(CommandsMixin, GenerationMixin, App):
         # duration and starves input handling.
         self._generation_task = asyncio.create_task(self._generate_response())
 
+    def _require_double_press(self, key: str, prompt: str) -> bool:
+        """Return True if this press confirms a previous one within the window."""
+        now = time.monotonic()
+        if now - self._last_press.get(key, 0.0) <= self.DOUBLE_PRESS_WINDOW:
+            self._last_press.pop(key, None)
+            return True
+        self._last_press[key] = now
+        self.notify(prompt, timeout=self.DOUBLE_PRESS_WINDOW)
+        return False
+
     def action_interrupt(self) -> None:
         """Ctrl+C cascade: clear input → cancel generation → double-press quits."""
         input_widget = self.query_one("#chat-input", Input)
         if input_widget.value:
             input_widget.value = ""
             self._clear_suggestion(input_widget)
-            self._last_ctrl_c = 0.0
+            self._last_press.pop("ctrl+c", None)
             return
         if self.is_generating:
             self._generation_cancelled = True
             self.notify("Cancelled", timeout=2)
-            self._last_ctrl_c = 0.0
+            self._last_press.pop("ctrl+c", None)
             return
-        now = time.monotonic()
-        if now - self._last_ctrl_c <= self.CTRL_C_DOUBLE_PRESS_WINDOW:
-            if self._auto_suggest_task and not self._auto_suggest_task.done():
-                self._auto_suggest_task.cancel()
-            self.exit()
+        if not self._require_double_press("ctrl+c", "Press Ctrl+C again to exit"):
             return
-        self._last_ctrl_c = now
-        self.notify("Press Ctrl+C again to exit", timeout=self.CTRL_C_DOUBLE_PRESS_WINDOW)
+        if self._auto_suggest_task and not self._auto_suggest_task.done():
+            self._auto_suggest_task.cancel()
+        self.exit()
 
     def action_focus_input(self) -> None:
         """Keep focus on input and accept suggestion if any."""
@@ -396,22 +403,29 @@ class OChat(CommandsMixin, GenerationMixin, App):
             self._generation_cancelled = True
             self.notify("Cancelled", timeout=2)
 
-    def action_toggle_streaming(self) -> None:
-        """Toggle streaming mode."""
-        self.streaming = not self.streaming
-        update_config(streaming=self.streaming)
-        mode = "ON" if self.streaming else "OFF"
-        self.notify(f"Streaming: {mode}", timeout=2)
+    async def action_retry(self) -> None:
+        """Regenerate last response (runtime shortcut for /retry)."""
+        if not self._require_double_press("ctrl+r", "Press Ctrl+R again to retry"):
+            return
+        await self._handle_retry()
 
-    def action_toggle_thinking(self) -> None:
-        """Toggle reasoning/thinking at inference level."""
-        self.thinking_enabled = not self.thinking_enabled
-        update_config(thinking_enabled=self.thinking_enabled)
-        mode = "ON" if self.thinking_enabled else "OFF"
-        self.notify(f"Thinking: {mode}", timeout=2)
+    async def action_undo(self) -> None:
+        """Undo last exchange (runtime shortcut for /undo)."""
+        if not self._require_double_press("ctrl+u", "Press Ctrl+U again to undo"):
+            return
+        await self._handle_undo()
+
+    async def action_impersonate(self) -> None:
+        """Generate a user-response suggestion (runtime shortcut for /impersonate)."""
+        input_widget = self.query_one("#chat-input", Input)
+        if input_widget.value:
+            return
+        await self._handle_impersonate()
 
     def action_clear(self) -> None:
         """Clear chat history."""
+        if not self._require_double_press("ctrl+l", "Press Ctrl+L again to clear"):
+            return
         if self._auto_suggest_task and not self._auto_suggest_task.done():
             self._auto_suggest_task.cancel()
             self._auto_suggest_task = None
